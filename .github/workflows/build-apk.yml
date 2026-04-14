@@ -29,7 +29,7 @@ jobs:
         run: npm install --global eas-cli@latest
 
       - name: Configure EAS project
-        run: eas init --non-interactive
+        run: eas init --non-interactive --force
 
       - name: Build APK
         run: eas build --platform android --profile preview --non-interactive --no-wait
