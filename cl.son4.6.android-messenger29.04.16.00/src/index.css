@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* Android-style mobile app layout */
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #2481cc;
+  font-family: -apple-system, 'Roboto', 'SF Pro Text', BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  position: relative;
+  background: white;
+  overflow: hidden;
+  box-shadow: 0 0 60px rgba(0,0,0,0.3);
+}
+
+/* Mobile viewport fix */
+@media (min-height: 800px) {
+  #root {
+    height: 100dvh;
+  }
+}
+
+/* Scrollbar hide */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Smooth scrolling for messages */
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* Status bar padding for mobile */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 44px);
+}
+
+/* Toast animation */
+@keyframes fade-in-down {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.animate-fade-in-down {
+  animation: fade-in-down 0.25s ease-out;
+}
+
+/* Active press scale */
+.active\:scale-98:active {
+  transform: scale(0.98);
+}
+
+/* Message bubble pulse for pending */
+@keyframes pulse-light {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 0.4; }
+}
+
+/* Bounce animation */
+@keyframes bounce-smooth {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-6px); }
+}
+
+/* Telegram-like chat background */
+.chat-bg {
+  background-color: #efeff4;
+  background-image: none;
+}
+
+/* Prevent text selection on UI elements */
+button, a {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Input fixes */
+input, textarea {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Fix for mobile keyboard pushing content */
+.h-full {
+  height: 100%;
+}
+
+/* Custom scrollbar for desktop preview */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.15);
+    border-radius: 2px;
+  }
+}
+
+/* Ripple effect on tap */
+@keyframes ripple {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* Screen transitions */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slide-out-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-30%); }
+}
