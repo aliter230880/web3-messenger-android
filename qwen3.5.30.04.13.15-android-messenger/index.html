@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#3390ec" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Web3 Messenger - Децентрализованный мессенджер с защитой Web3" />
+    <title>Web3 Messenger</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%233390ec' width='100' height='100' rx='20'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>💬</text></svg>" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%233390ec' width='100' height='100' rx='20'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>💬</text></svg>" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Web3 Messenger" />
+    <meta name="msapplication-starturl" content="/" />
+    <meta name="msapplication-TileColor" content="#3390ec" />
+    
+    <!-- Buffer Polyfill for Web3 libraries -->
+    <script>
+      window.global = window.global || window;
+      window.Buffer = window.Buffer || {
+        isBuffer: () => false,
+        from: () => new Uint8Array(),
+        alloc: () => new Uint8Array(),
+      };
+      window.process = window.process || { env: {} };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
