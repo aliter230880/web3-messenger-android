@@ -73,6 +73,22 @@ jobs:
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npx cap sync android
 
+      - name: Fix Kotlin duplicate classes conflict
+        working-directory: qwen3.5.30.04.15.03-android-messenger/android
+        run: |
+          cat >> build.gradle << 'EOF'
+
+          subprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
+                      force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22"
+                      force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"
+                  }
+              }
+          }
+          EOF
+
       - name: Make gradlew executable
         working-directory: qwen3.5.30.04.15.03-android-messenger/android
         run: chmod +x gradlew
