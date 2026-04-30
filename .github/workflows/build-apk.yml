@@ -44,9 +44,13 @@ jobs:
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npm run build
 
-      - name: Add Android platform (if not present)
+      - name: Remove incomplete android folder
         working-directory: qwen3.5.30.04.15.03-android-messenger
-        run: npx cap add android || echo "Android platform already exists"
+        run: rm -rf android
+
+      - name: Add Android platform
+        working-directory: qwen3.5.30.04.15.03-android-messenger
+        run: npx cap add android
 
       - name: Sync Capacitor
         working-directory: qwen3.5.30.04.15.03-android-messenger
@@ -66,3 +70,4 @@ jobs:
           name: web3-messenger-debug
           path: qwen3.5.30.04.15.03-android-messenger/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
