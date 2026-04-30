@@ -1,0 +1,194 @@
+@import 'tailwindcss';
+
+:root {
+  /* Telegram color scheme - Light mode */
+  --tg-theme-bg-color: #ffffff;
+  --tg-theme-text-color: #000000;
+  --tg-theme-hint-color: #707579;
+  --tg-theme-link-color: #3390ec;
+  --tg-theme-button-color: #3390ec;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #f1f1f1;
+  
+  /* Chat specific */
+  --tg-chat-bg-color: #8e9db6;
+  --tg-message-out-bg: #eeffde;
+  --tg-message-in-bg: #ffffff;
+  --tg-message-text: #000000;
+  --tg-message-meta: #4fae4e;
+  
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark mode */
+.dark {
+  --tg-theme-bg-color: #212121;
+  --tg-theme-text-color: #ffffff;
+  --tg-theme-hint-color: #aaaaaa;
+  --tg-theme-link-color: #8774e1;
+  --tg-theme-button-color: #8774e1;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #0f0f0f;
+  
+  --tg-chat-bg-color: #0f0f0f;
+  --tg-message-out-bg: #8774e1;
+  --tg-message-in-bg: #212121;
+  --tg-message-text: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--tg-theme-secondary-bg-color);
+  transition: background-color 0.3s ease;
+  
+  /* Mobile responsive */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Prevent horizontal scroll */
+* {
+  max-width: 100vw;
+  box-sizing: border-box;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  html, body {
+    overflow-x: hidden;
+  }
+  
+  #root {
+    overflow-x: hidden;
+  }
+}
+
+/* Dark mode - принудительное применение */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background-color: var(--tg-theme-secondary-bg-color);
+}
+
+/* Dark mode transitions */
+.dark * {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom scrollbar - Telegram style */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Chat background pattern - Telegram default */
+.chat-bg {
+  background-color: #8e9db6;
+  background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M15 15h10v10H15V15zm20 0h10v10H35V15zm20 0h10v10H55V15zm20 0h10v10H75V15zm-60 20h10v10H15V35zm20 0h10v10H35V35zm20 0h10v10H55V35zm20 0h10v10H75V35zm-60 20h10v10H15V55zm20 0h10v10H35V55zm20 0h10v10H55V55zm20 0h10v10H75V55zm-60 20h10v10H15V75zm20 0h10v10H35V75zm20 0h10v10H55V75zm20 0h10v10H75V75z' fill='%239cacb8' fill-opacity='0.4'/%3E%3C/svg%3E");
+}
+
+/* Message bubble animations */
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.message-bubble {
+  animation: messageIn 0.15s ease-out;
+}
+
+/* Ripple effect for buttons */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: width 0.3s, height 0.3s;
+}
+
+.ripple:active::after {
+  width: 200px;
+  height: 200px;
+}
+
+/* PWA safe area support */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Prevent text selection on UI elements */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Input styling */
+.telegram-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  line-height: 1.4;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.telegram-input::placeholder {
+  color: #707579;
+}
+
+/* Avatar gradients - Telegram style */
+.avatar-gradient-1 { background: linear-gradient(135deg, #f093a8, #d94f6a); }
+.avatar-gradient-2 { background: linear-gradient(135deg, #5ac8fa, #007aff); }
+.avatar-gradient-3 { background: linear-gradient(135deg, #4cd964, #34aadc); }
+.avatar-gradient-4 { background: linear-gradient(135deg, #ffcc00, #ff9500); }
+.avatar-gradient-5 { background: linear-gradient(135deg, #ff2d55, #ff6482); }
+.avatar-gradient-6 { background: linear-gradient(135deg, #af52de, #8e44ad); }
+.avatar-gradient-7 { background: linear-gradient(135deg, #5ac8fa, #5856d6); }
+.avatar-gradient-8 { background: linear-gradient(135deg, #ff9500, #ff3b30); }
