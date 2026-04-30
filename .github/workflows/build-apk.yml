@@ -24,8 +24,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+      - name: Install required Android SDK components
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          yes | sdkmanager --licenses || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -43,6 +45,21 @@ jobs:
       - name: Build web app
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npm run build
+
+      - name: Create simplified Capacitor config for CI
+        working-directory: qwen3.5.30.04.15.03-android-messenger
+        run: |
+          cat > capacitor.config.json << 'EOF'
+          {
+            "appId": "space.aliterra.messenger",
+            "appName": "Web3 Messenger",
+            "webDir": "dist",
+            "server": {
+              "androidScheme": "https"
+            }
+          }
+          EOF
+          rm -f capacitor.config.ts
 
       - name: Remove incomplete android folder
         working-directory: qwen3.5.30.04.15.03-android-messenger
@@ -62,7 +79,15 @@ jobs:
 
       - name: Build debug APK
         working-directory: qwen3.5.30.04.15.03-android-messenger/android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log; exit ${PIPESTATUS[0]}
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: /tmp/gradle-build.log
+          retention-days: 3
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -70,4 +95,3 @@ jobs:
           name: web3-messenger-debug
           path: qwen3.5.30.04.15.03-android-messenger/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-
