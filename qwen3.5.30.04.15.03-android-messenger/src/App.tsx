@@ -10,11 +10,11 @@ import { AvatarSelector } from './components/AvatarSelector';
 import { useWeb3Messenger } from './hooks/useWeb3Messenger';
 
 export default function App() {
-  const { activeChatId, setActiveChat, toggleSettings } = useAppStore();
+  const { activeChatId, setActiveChat, toggleSettings, toggleWalletModal } = useAppStore();
   const isAvatarSelectorOpen = useAppStore((state) => state.isAvatarSelectorOpen);
   const toggleAvatarSelector = useAppStore((state) => state.toggleAvatarSelector);
   const setAvatar = useAppStore((state) => state.setAvatar);
-  const { connect, isConnecting, isConnected } = useWeb3Messenger();
+  const { isConnecting, isConnected, address } = useWeb3Messenger();
   const [showMobileList, setShowMobileList] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
 
@@ -62,20 +62,22 @@ export default function App() {
               <Edit3 className="w-6 h-6 text-gray-600 dark:text-gray-300" />
             </button>
 
-            {!isConnected && (
-              <button
-                onClick={connect}
-                disabled={isConnecting}
-                className="p-2.5 bg-[#3390ec] hover:bg-[#2b7ecc] text-white rounded-full transition-colors disabled:opacity-50"
-                title="Подключить кошелёк"
-              >
-                {isConnecting ? (
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <Wallet className="w-5 h-5" />
-                )}
-              </button>
-            )}
+            <button
+              onClick={toggleWalletModal}
+              disabled={isConnecting}
+              className={`p-2.5 rounded-full transition-colors disabled:opacity-50 ${
+                isConnected
+                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                  : 'bg-[#3390ec] hover:bg-[#2b7ecc] text-white'
+              }`}
+              title={isConnected ? `${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Подключить кошелёк'}
+            >
+              {isConnecting ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Wallet className="w-5 h-5" />
+              )}
+            </button>
           </div>
 
           {/* Chat List */}
