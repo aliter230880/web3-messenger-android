@@ -119,8 +119,18 @@ jobs:
             "appId": "andr.web2gram",
             "appName": "Web2Gram",
             "webDir": "dist",
+            "allowNavigation": [
+              "*.walletconnect.com",
+              "*.walletconnect.org",
+              "metamask.app.link",
+              "link.trustwallet.com",
+              "*.infura.io"
+            ],
             "server": {
               "androidScheme": "https"
+            },
+            "android": {
+              "allowMixedContent": true
             }
           }
           EOF
