@@ -53,10 +53,19 @@ export function useWeb3Messenger() {
       setIsConnecting(true);
       setError(null);
       try {
-        const connection =
-          walletType === 'walletconnect'
-            ? await walletService.connectWalletConnect()
-            : await walletService.connectMetaMask();
+        let connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>;
+
+        if (walletType === 'walletconnect') {
+          // QR modal — for desktop / browser
+          connection = await walletService.connectWalletConnect();
+        } else if (walletType === 'trust') {
+          // Trust Wallet deep-link (Capacitor / mobile)
+          connection = await walletService.connectViaDeepLink('trust');
+        } else {
+          // MetaMask: extension on desktop, deep-link in Capacitor
+          connection = await walletService.connectMetaMask();
+        }
+
         await _finishConnect(connection);
       } catch (err: any) {
         console.error('❌ Ошибка подключения:', err);
@@ -147,5 +156,6 @@ export function useWeb3Messenger() {
     isE2EInitialized,
     isMobile: walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
+    isCapacitor: walletService.isCapacitor(),
   };
 }
