@@ -36,12 +36,12 @@ jobs:
 
       - name: Install base dependencies
         working-directory: qwen3.5.30.04.15.03-android-messenger
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Install WalletConnect and UI dependencies
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: |
-          npm install \
+          npm install --legacy-peer-deps \
             @walletconnect/ethereum-provider@^2.17.0 \
             vite-plugin-node-polyfills@^0.22.0 \
             @tailwindcss/vite \
@@ -53,29 +53,28 @@ jobs:
 
       - name: Install Capacitor packages
         working-directory: qwen3.5.30.04.15.03-android-messenger
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/splash-screen
+        run: npm install --legacy-peer-deps @capacitor/core @capacitor/cli @capacitor/android @capacitor/splash-screen
 
       - name: Patch store for WalletConnect modal support
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: |
-          python3 << 'PYTHON_EOF'
-          import re, os
-          store_file = 'src/store/index.ts'
-          if not os.path.exists(store_file):
-              exit(0)
-          content = open(store_file).read()
-          if 'isWalletModalOpen' not in content:
-              content = re.sub(r'(isSettingsOpen:\s*false)', r'\1,\n  isWalletModalOpen: false', content)
-              content = re.sub(
-                  r'(toggleSettings:\s*\(\)\s*=>)',
-                  'toggleWalletModal: () => set((state) => ({ isWalletModalOpen: !state.isWalletModalOpen })),\n  \\1',
-                  content
-              )
-              open(store_file, 'w').write(content)
-              print('Store patched with toggleWalletModal')
-          else:
-              print('Store already has toggleWalletModal')
-          PYTHON_EOF
+          node << 'NODE_EOF'
+          const fs = require('fs');
+          const storeFile = 'src/store/index.ts';
+          if (!fs.existsSync(storeFile)) { console.log('Store not found, skipping'); process.exit(0); }
+          let content = fs.readFileSync(storeFile, 'utf8');
+          if (!content.includes('isWalletModalOpen')) {
+            content = content.replace(/(isSettingsOpen:\s*false)/, '$1,\n  isWalletModalOpen: false');
+            content = content.replace(
+              /(toggleSettings:\s*\(\)\s*=>)/,
+              'toggleWalletModal: () => set((state) => ({ isWalletModalOpen: !state.isWalletModalOpen })),\n  $1'
+            );
+            fs.writeFileSync(storeFile, content);
+            console.log('Store patched with toggleWalletModal');
+          } else {
+            console.log('Store already has toggleWalletModal');
+          }
+          NODE_EOF
 
       - name: Create CI-safe vite config
         working-directory: qwen3.5.30.04.15.03-android-messenger
