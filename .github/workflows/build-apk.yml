@@ -34,25 +34,91 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install dependencies
+      - name: Install base dependencies
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npm install
+
+      - name: Install WalletConnect and UI dependencies
+        working-directory: qwen3.5.30.04.15.03-android-messenger
+        run: |
+          npm install \
+            @walletconnect/ethereum-provider@^2.17.0 \
+            vite-plugin-node-polyfills@^0.22.0 \
+            @tailwindcss/vite \
+            tailwindcss \
+            framer-motion \
+            lucide-react \
+            ethers@^5.7.2 \
+            zustand@^5.0.0
 
       - name: Install Capacitor packages
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/splash-screen
 
+      - name: Patch store for WalletConnect modal support
+        working-directory: qwen3.5.30.04.15.03-android-messenger
+        run: |
+          python3 << 'PYTHON_EOF'
+          import re, os
+          store_file = 'src/store/index.ts'
+          if not os.path.exists(store_file):
+              exit(0)
+          content = open(store_file).read()
+          if 'isWalletModalOpen' not in content:
+              content = re.sub(r'(isSettingsOpen:\s*false)', r'\1,\n  isWalletModalOpen: false', content)
+              content = re.sub(
+                  r'(toggleSettings:\s*\(\)\s*=>)',
+                  'toggleWalletModal: () => set((state) => ({ isWalletModalOpen: !state.isWalletModalOpen })),\n  \\1',
+                  content
+              )
+              open(store_file, 'w').write(content)
+              print('Store patched with toggleWalletModal')
+          else:
+              print('Store already has toggleWalletModal')
+          PYTHON_EOF
+
+      - name: Create CI-safe vite config
+        working-directory: qwen3.5.30.04.15.03-android-messenger
+        run: |
+          cat > vite.config.ts << 'VITE_EOF'
+          import { defineConfig } from "vite";
+          import react from "@vitejs/plugin-react";
+          import tailwindcss from "@tailwindcss/vite";
+          import { nodePolyfills } from "vite-plugin-node-polyfills";
+
+          export default defineConfig({
+            base: "./",
+            plugins: [
+              nodePolyfills({ include: ["buffer", "stream", "util", "events", "process"] }),
+              react(),
+              tailwindcss(),
+            ],
+            define: {
+              global: "globalThis",
+            },
+            resolve: {
+              dedupe: ["react", "react-dom"],
+            },
+            build: {
+              outDir: "dist",
+              emptyOutDir: true,
+            },
+          });
+          VITE_EOF
+
       - name: Build web app
         working-directory: qwen3.5.30.04.15.03-android-messenger
+        env:
+          VITE_WALLETCONNECT_PROJECT_ID: "2de1d724533083c2ed68197548dead4e"
         run: npm run build
 
-      - name: Create simplified Capacitor config for CI
+      - name: Create Capacitor config for CI
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: |
           cat > capacitor.config.json << 'EOF'
           {
-            "appId": "space.aliterra.messenger",
-            "appName": "Web3 Messenger",
+            "appId": "andr.web2gram",
+            "appName": "Web2Gram",
             "webDir": "dist",
             "server": {
               "androidScheme": "https"
