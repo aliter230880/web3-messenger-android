@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Copy, Check, ArrowLeft, Smartphone, QrCode } from 'lucide-react';
+import { X, Copy, Check, ArrowLeft, Smartphone, QrCode, ExternalLink } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -38,29 +38,51 @@ const TrustWalletIcon = () => (
   </svg>
 );
 
-type ConnectingType = 'metamask' | 'walletconnect' | 'trust' | null;
+const AliTerraIcon = () => (
+  <svg viewBox="0 0 40 40" className="w-7 h-7 shrink-0" fill="none">
+    <rect width="40" height="40" rx="10" fill="#1a1a2e"/>
+    <circle cx="20" cy="20" r="10" stroke="#fbbf24" strokeWidth="2" fill="none"/>
+    <path d="M20 10 L20 30 M10 20 L30 20" stroke="#fbbf24" strokeWidth="1.5" strokeLinecap="round"/>
+    <circle cx="20" cy="20" r="3" fill="#fbbf24"/>
+  </svg>
+);
+
+type ConnectingType = 'walletconnect' | null;
 
 export function WalletModal() {
   const { isWalletModalOpen, toggleWalletModal } = useAppStore();
   const {
     connect, disconnect, isConnecting, isConnected, address,
-    isCapacitor, hasMetaMask,
+    isCapacitor, hasMetaMask, openInWalletBrowser,
   } = useWeb3Messenger();
 
   const [copied, setCopied] = useState(false);
   const [connectingType, setConnectingType] = useState<ConnectingType>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
 
-  const handleConnect = async (type: 'metamask' | 'walletconnect' | 'trust') => {
+  // Only WalletConnect QR goes through the async connect flow.
+  const handleWCConnect = async () => {
     setConnectError(null);
     try {
-      setConnectingType(type);
-      await connect(type);
+      setConnectingType('walletconnect');
+      await connect('walletconnect');
       toggleWalletModal();
     } catch (err: any) {
       setConnectError(err.message || 'Ошибка подключения');
     } finally {
       setConnectingType(null);
+    }
+  };
+
+  // MetaMask extension (desktop only)
+  const handleMetaMaskDesktop = async () => {
+    setConnectError(null);
+    try {
+      setConnectingType(null);
+      await connect('metamask');
+      toggleWalletModal();
+    } catch (err: any) {
+      setConnectError(err.message || 'Ошибка подключения');
     }
   };
 
@@ -130,7 +152,6 @@ export function WalletModal() {
                       ✓ Polygon Mainnet
                     </span>
                   </div>
-
                   <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-4">
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Адрес кошелька</p>
                     <div className="flex items-center gap-2">
@@ -142,7 +163,6 @@ export function WalletModal() {
                       </button>
                     </div>
                   </div>
-
                   <button onClick={handleDisconnect} className="w-full py-3.5 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 font-medium rounded-2xl transition-colors">
                     Отключить кошелёк
                   </button>
@@ -158,73 +178,87 @@ export function WalletModal() {
                     </div>
                   )}
 
-                  {/* ── Capacitor / mobile ── */}
+                  {/* ── MOBILE / CAPACITOR ── */}
                   {isCapacitor ? (
                     <>
                       <p className="text-center text-gray-500 dark:text-gray-400 text-sm px-2 pb-1">
-                        Нажмите — откроется кошелёк для подтверждения.
-                        После одобрения вернитесь сюда.
+                        Откройте Web3Gram в браузере кошелька — подключение произойдёт автоматически
                       </p>
 
-                      {/* MetaMask deep-link */}
+                      {/* MetaMask — opens wallet.aliterra.space in MetaMask DApp browser */}
                       <button
-                        onClick={() => handleConnect('metamask')}
-                        disabled={isConnecting}
-                        className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
+                        onClick={() => openInWalletBrowser('metamask')}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all active:scale-[.98]"
                       >
                         <MetaMaskIcon />
                         <div className="text-left flex-1">
                           <div className="font-semibold">MetaMask</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <Smartphone className="w-3 h-3" />
-                            Откроется MetaMask → подтвердите
+                            Открыть в браузере MetaMask
                           </div>
                         </div>
-                        {connectingType === 'metamask' ? (
-                          <div className="w-5 h-5 border-2 border-orange-400/30 border-t-orange-500 rounded-full animate-spin shrink-0" />
-                        ) : null}
+                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
                       </button>
 
-                      {/* Trust Wallet deep-link */}
+                      {/* Trust Wallet — Android Intent to Trust's DApp browser */}
                       <button
-                        onClick={() => handleConnect('trust')}
-                        disabled={isConnecting}
-                        className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
+                        onClick={() => openInWalletBrowser('trust')}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all active:scale-[.98]"
                       >
                         <TrustWalletIcon />
                         <div className="text-left flex-1">
                           <div className="font-semibold">Trust Wallet</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <Smartphone className="w-3 h-3" />
-                            Откроется Trust Wallet → подтвердите
+                            Открыть в браузере Trust Wallet
                           </div>
                         </div>
-                        {connectingType === 'trust' ? (
-                          <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
-                        ) : null}
+                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
                       </button>
 
-                      {/* WalletConnect QR — fallback for scanning from another device */}
+                      {/* AliTerra Wallet */}
                       <button
-                        onClick={() => handleConnect('walletconnect')}
-                        disabled={isConnecting}
-                        className="w-full flex items-center gap-4 py-3.5 px-5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl transition-all disabled:opacity-50"
+                        onClick={() => openInWalletBrowser('aliterra')}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-yellow-50 dark:bg-yellow-900/20 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 text-gray-800 dark:text-white font-medium rounded-2xl transition-all active:scale-[.98]"
                       >
-                        <WalletConnectIcon />
+                        <AliTerraIcon />
                         <div className="text-left flex-1">
-                          <div className="font-medium text-sm">QR-код (другое устройство)</div>
-                          <div className="text-xs text-gray-400 flex items-center gap-1">
-                            <QrCode className="w-3 h-3" />
-                            Сканировать из другого телефона
+                          <div className="font-semibold">AliTerra Wallet</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3" />
+                            wallet.aliterra.space
                           </div>
                         </div>
-                        {connectingType === 'walletconnect' ? (
-                          <div className="w-5 h-5 border-2 border-gray-400/30 border-t-gray-500 rounded-full animate-spin shrink-0" />
-                        ) : null}
+                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
                       </button>
+
+                      {/* WalletConnect QR — cross-device fallback */}
+                      <div className="pt-1">
+                        <p className="text-xs text-gray-400 dark:text-gray-500 text-center mb-2">
+                          Или подключите через QR с другого устройства
+                        </p>
+                        <button
+                          onClick={handleWCConnect}
+                          disabled={isConnecting}
+                          className="w-full flex items-center gap-4 py-3.5 px-5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl transition-all disabled:opacity-50"
+                        >
+                          <WalletConnectIcon />
+                          <div className="text-left flex-1">
+                            <div className="font-medium text-sm">WalletConnect QR</div>
+                            <div className="text-xs text-gray-400 flex items-center gap-1">
+                              <QrCode className="w-3 h-3" />
+                              Сканировать с другого телефона
+                            </div>
+                          </div>
+                          {connectingType === 'walletconnect' && (
+                            <div className="w-5 h-5 border-2 border-gray-400/30 border-t-gray-500 rounded-full animate-spin shrink-0" />
+                          )}
+                        </button>
+                      </div>
                     </>
                   ) : (
-                    /* ── Desktop / web ── */
+                    /* ── DESKTOP / WEB ── */
                     <>
                       <p className="text-center text-gray-500 dark:text-gray-400 text-sm px-2 pb-1">
                         Выберите способ подключения к Polygon Mainnet
@@ -232,7 +266,7 @@ export function WalletModal() {
 
                       {/* WalletConnect QR */}
                       <button
-                        onClick={() => handleConnect('walletconnect')}
+                        onClick={handleWCConnect}
                         disabled={isConnecting}
                         className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
                       >
@@ -251,7 +285,7 @@ export function WalletModal() {
 
                       {/* MetaMask extension */}
                       <button
-                        onClick={() => handleConnect('metamask')}
+                        onClick={handleMetaMaskDesktop}
                         disabled={isConnecting}
                         className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
                       >
@@ -259,12 +293,27 @@ export function WalletModal() {
                         <div className="text-left flex-1">
                           <div className="font-semibold">MetaMask</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {hasMetaMask ? <><span className="text-emerald-500">✓</span> Расширение обнаружено</> : 'Браузерное расширение'}
+                            {hasMetaMask
+                              ? <><span className="text-emerald-500">✓</span> Расширение обнаружено</>
+                              : 'Браузерное расширение'}
                           </div>
                         </div>
-                        {connectingType === 'metamask' && (
-                          <div className="w-5 h-5 border-2 border-orange-400/30 border-t-orange-500 rounded-full animate-spin shrink-0" />
-                        )}
+                      </button>
+
+                      {/* AliTerra Wallet (web link) */}
+                      <button
+                        onClick={() => openInWalletBrowser('aliterra')}
+                        className="w-full flex items-center gap-4 py-3.5 px-5 bg-yellow-50 dark:bg-yellow-900/20 hover:bg-yellow-100 dark:hover:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 text-gray-800 dark:text-white font-medium rounded-2xl transition-all"
+                      >
+                        <AliTerraIcon />
+                        <div className="text-left flex-1">
+                          <div className="font-semibold">AliTerra Wallet</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3" />
+                            wallet.aliterra.space
+                          </div>
+                        </div>
+                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
                       </button>
                     </>
                   )}
