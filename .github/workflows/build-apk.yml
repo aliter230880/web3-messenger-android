@@ -124,7 +124,9 @@ jobs:
             "allowNavigation": [
               "*.walletconnect.com",
               "*.walletconnect.org",
-              "*.infura.io"
+              "*.infura.io",
+              "wallet.aliterra.space",
+              "chat.aliterra.space"
             ],
             "server": {
               "androidScheme": "https"
@@ -147,6 +149,18 @@ jobs:
       - name: Sync Capacitor
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npx cap sync android
+
+      - name: Patch AndroidManifest — deep links + intent filters
+        working-directory: qwen3.5.30.04.15.03-android-messenger/android/app/src/main
+        run: |
+          MANIFEST="AndroidManifest.xml"
+          # Add QUERY intents for MetaMask, Trust, AliTerra deep-links (Android 11+)
+          if ! grep -q "metamask" "$MANIFEST"; then
+            sed -i 's|</manifest>|    <queries>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="metamask"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="trust"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="wc"/></intent>\n    </queries>\n</manifest>|' "$MANIFEST"
+            echo "AndroidManifest patched with deep-link queries"
+          else
+            echo "AndroidManifest already has deep-link queries"
+          fi
 
       - name: Fix Kotlin duplicate classes conflict
         working-directory: qwen3.5.30.04.15.03-android-messenger/android
