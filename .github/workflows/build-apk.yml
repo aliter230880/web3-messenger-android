@@ -118,14 +118,13 @@ jobs:
         run: |
           cat > capacitor.config.json << 'EOF'
           {
-            "appId": "andr.web2gram",
-            "appName": "Web2Gram",
+            "appId": "andr.web3gram",
+            "appName": "Web3Gram",
             "webDir": "dist",
             "allowNavigation": [
               "*.walletconnect.com",
               "*.walletconnect.org",
               "metamask.app.link",
-              "link.trustwallet.com",
               "*.infura.io"
             ],
             "server": {
