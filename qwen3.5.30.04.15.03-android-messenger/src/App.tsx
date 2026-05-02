@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Menu, Search, Edit3, Wallet } from 'lucide-react';
 import { useAppStore } from './store';
 import { ChatList } from './components/ChatList';
@@ -14,9 +14,24 @@ export default function App() {
   const isAvatarSelectorOpen = useAppStore((state) => state.isAvatarSelectorOpen);
   const toggleAvatarSelector = useAppStore((state) => state.toggleAvatarSelector);
   const setAvatar = useAppStore((state) => state.setAvatar);
-  const { isConnecting, isConnected, address } = useWeb3Messenger();
+  const { isConnecting, isConnected, address, connectAliTerra } = useWeb3Messenger();
   const [showMobileList, setShowMobileList] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
+
+  // ── AliTerra Wallet redirect-back callback (Capacitor mode) ────────────────
+  // wallet.aliterra.space redirects back with ?w3g_addr=0x... after unlock.
+  // We detect it on mount, auto-connect, and clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const w3gAddr = params.get('w3g_addr');
+    if (w3gAddr && w3gAddr.startsWith('0x') && w3gAddr.length >= 42) {
+      // Strip ?w3g_addr from URL immediately
+      const clean = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', clean);
+      // Auto-connect as AliTerra read-only
+      connectAliTerra(w3gAddr).catch(console.error);
+    }
+  }, []); // run once on mount
 
   const handleChatSelect = (chatId: string) => {
     setActiveChat(chatId);
@@ -45,7 +60,7 @@ export default function App() {
             >
               <Menu className="w-6 h-6 text-gray-600 dark:text-gray-300" />
             </button>
-            
+
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
@@ -54,7 +69,7 @@ export default function App() {
                 className="w-full pl-11 pr-4 py-2.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-[#3390ec] rounded-full text-gray-900 dark:text-white placeholder-gray-500 transition-all outline-none"
               />
             </div>
-            
+
             <button
               onClick={() => setShowNewChat(true)}
               className="p-2.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
@@ -70,7 +85,11 @@ export default function App() {
                   ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
                   : 'bg-[#3390ec] hover:bg-[#2b7ecc] text-white'
               }`}
-              title={isConnected ? `${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Подключить кошелёк'}
+              title={
+                isConnected
+                  ? `${address?.slice(0, 6)}...${address?.slice(-4)}`
+                  : 'Подключить кошелёк'
+              }
             >
               {isConnecting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
