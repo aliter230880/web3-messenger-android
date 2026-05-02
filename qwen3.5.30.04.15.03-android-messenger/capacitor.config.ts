@@ -6,9 +6,11 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
-    // Для локальной разработки раскомментируйте:
-    // url: 'http://192.168.1.100:5173',
-    // cleartext: true,
+    // wallet.aliterra.space must load inside the WebView (not Chrome) so that
+    // after unlock it can redirect back to https://localhost/?w3g_addr=ADDRESS
+    // and the WebView receives the address — without this, Capacitor opens
+    // wallet.aliterra.space in Chrome, which cannot reach https://localhost.
+    allowNavigation: ['wallet.aliterra.space'],
   },
   plugins: {
     SplashScreen: {
