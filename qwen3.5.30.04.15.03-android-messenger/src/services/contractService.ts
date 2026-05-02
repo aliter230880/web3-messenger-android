@@ -5,13 +5,15 @@ import type { Signer } from 'ethers';
 export const CONTRACT_ADDRESSES = {
   // Существующие контракты
   Identity: '0xcFcA16C8c38a83a71936395039757DcFF6040c1E',
-  IdentityV2: '0xd7cCe5816429616d92F7B2e8eAeFf20ef2B534FC', // Новый
+  IdentityV2: '0xd7cCe5816429616d92F7B2e8eAeFf20ef2B534FC',
   MessageStorage: '0xA07B784e6e1Ca3CA00084448a0b4957005C5ACEb',
   KeyEscrow: '0x20AFA1D1d8c25ecCe66fe8c1729a33F2d82BBA53',
   SocialWalletRegistry: '0xC2c66A1eBe0484c8a91c4849680Bcd77ada4E036',
-  
-  // Новые гибридные контракты
-  HybridMessenger: '0x67bbFc557D23e2dCEde220d3A9Adce505FB01bF5', // Новый
+  HybridMessenger: '0x67bbFc557D23e2dCEde220d3A9Adce505FB01bF5',
+
+  // Фабрика логина / смарт-кошельков (ERC-4337 ManagedAccountFactory)
+  // Используется для создания/проверки смарт-кошелька после подключения EOA
+  LoginFactory: '0xF3D8c9B1e209DD3b8f2F70a1A896f3F3f5cd77C8',
 } as const;
 
 // ABI контрактов (минимальные для работы)
@@ -53,6 +55,47 @@ const KEY_ESCROW_ABI = [
   'event KeyDeposited(address indexed user, uint256 timestamp)',
 ];
 
+// ─── Login / Smart-Wallet Factory ABI (ERC-4337 ManagedAccountFactory) ───────
+// Contract: 0xF3D8c9B1e209DD3b8f2F70a1A896f3F3f5cd77C8
+// Selectors confirmed via bytecode + 4byte.directory
+const LOGIN_FACTORY_ABI = [
+  // Predicts the deterministic smart-wallet address for a given EOA signer.
+  // Call this first — free view call, no gas.
+  'function getAddress(address admin, bytes calldata data) external view returns (address)',
+
+  // Checks whether a smart-wallet account is already deployed.
+  'function isRegistered(address account) external view returns (bool)',
+
+  // Returns all smart-wallet addresses controlled by a signer.
+  'function getAccountsOfSigner(address signer) external view returns (address[])',
+
+  // Deploys (or returns existing) smart-wallet for the given admin/signer.
+  // Costs gas the first time; idempotent afterwards.
+  'function createAccount(address admin, bytes calldata data) external returns (address)',
+
+  // Paginated list of all deployed accounts.
+  'function getAccounts(uint256 start, uint256 end) external view returns (address[])',
+  'function getAllAccounts() external view returns (address[])',
+
+  // ERC-4337 entry-point address used by this factory.
+  'function entrypoint() external view returns (address)',
+
+  // EIP-165 metadata URI.
+  'function contractURI() external view returns (string)',
+
+  // Events
+  'event AccountCreated(address indexed account, address indexed accountAdmin, bytes data)',
+];
+
+export interface LoginResult {
+  /** The user's original EOA address (from MetaMask / WalletConnect etc.) */
+  signerAddress: string;
+  /** The deterministic smart-wallet address from the login factory */
+  smartWalletAddress: string;
+  /** Whether the smart wallet already existed (false = newly created) */
+  alreadyRegistered: boolean;
+}
+
 export class ContractService {
   private signer: Signer | null = null;
   private provider: ethers.providers.Provider | null = null;
@@ -63,6 +106,7 @@ export class ContractService {
   private messageStorageContract: ethers.Contract | null = null;
   private keyEscrowContract: ethers.Contract | null = null;
   private hybridMessengerContract: ethers.Contract | null = null;
+  private loginFactoryContract: ethers.Contract | null = null;
 
   private constructor() {}
 
@@ -113,9 +157,89 @@ export class ContractService {
       signer
     );
 
+    // LoginFactory — используем provider для read-only вызовов
+    // (getAddress / isRegistered бесплатны), signer — для createAccount
+    this.loginFactoryContract = new ethers.Contract(
+      CONTRACT_ADDRESSES.LoginFactory,
+      LOGIN_FACTORY_ABI,
+      signer
+    );
+
     console.log('✅ Контракты инициализированы');
+    console.log('   LoginFactory:', CONTRACT_ADDRESSES.LoginFactory);
     console.log('   IdentityV2:', CONTRACT_ADDRESSES.IdentityV2);
     console.log('   HybridMessenger:', CONTRACT_ADDRESSES.HybridMessenger);
+  }
+
+  /**
+   * Логин через LoginFactory (ERC-4337 ManagedAccountFactory).
+   *
+   * Шаги:
+   *  1. getAddress(signerAddr, '0x') — предсказать адрес смарт-кошелька (бесплатно)
+   *  2. isRegistered(smartWallet)    — уже задеплоен? (бесплатно)
+   *  3. createAccount(signerAddr, '0x') — задеплоить если нет (gas)
+   *
+   * Returns: { signerAddress, smartWalletAddress, alreadyRegistered }
+   */
+  async loginWithFactory(signerAddress: string): Promise<LoginResult> {
+    if (!this.loginFactoryContract) {
+      throw new Error('LoginFactory не инициализирован — сначала вызовите initialize()');
+    }
+
+    const factory = this.loginFactoryContract;
+    const EMPTY_DATA = '0x';
+
+    // Step 1: predict smart-wallet address (pure view, no gas)
+    let smartWalletAddress: string;
+    try {
+      smartWalletAddress = await factory.getAddress(signerAddress, EMPTY_DATA);
+    } catch (err: any) {
+      console.warn('⚠️ LoginFactory.getAddress failed, using signer as identity:', err.message);
+      // Fallback: use EOA directly — don't block login
+      return { signerAddress, smartWalletAddress: signerAddress, alreadyRegistered: true };
+    }
+
+    // Step 2: check if already deployed (view, no gas)
+    let alreadyRegistered = false;
+    try {
+      alreadyRegistered = await factory.isRegistered(smartWalletAddress);
+    } catch (err: any) {
+      console.warn('⚠️ LoginFactory.isRegistered failed:', err.message);
+    }
+
+    // Step 3: deploy smart wallet if needed
+    if (!alreadyRegistered) {
+      console.log('🔨 Создаём смарт-кошелёк на Polygon через LoginFactory…');
+      try {
+        const tx = await factory.createAccount(signerAddress, EMPTY_DATA);
+        const receipt = await tx.wait();
+        console.log('✅ Смарт-кошелёк создан:', smartWalletAddress, 'tx:', receipt.transactionHash);
+        alreadyRegistered = false; // was just created
+      } catch (err: any) {
+        // If createAccount reverts with "already exists" style error, the wallet
+        // was likely deployed in the same block — treat as registered.
+        console.warn('⚠️ createAccount error (may already exist):', err.message);
+        alreadyRegistered = true;
+      }
+    } else {
+      console.log('✅ Смарт-кошелёк уже зарегистрирован:', smartWalletAddress);
+    }
+
+    return { signerAddress, smartWalletAddress, alreadyRegistered };
+  }
+
+  /**
+   * Получить список смарт-кошельков для данного signer-адреса.
+   * Возвращает пустой массив если контракт недоступен.
+   */
+  async getAccountsOfSigner(signerAddress: string): Promise<string[]> {
+    if (!this.loginFactoryContract) return [];
+    try {
+      return await this.loginFactoryContract.getAccountsOfSigner(signerAddress);
+    } catch (err: any) {
+      console.warn('⚠️ getAccountsOfSigner:', err.message);
+      return [];
+    }
   }
 
   /**
