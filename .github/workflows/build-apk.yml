@@ -109,6 +109,7 @@ jobs:
         working-directory: qwen3.5.30.04.15.03-android-messenger
         env:
           VITE_WALLETCONNECT_PROJECT_ID: "2de1d724533083c2ed68197548dead4e"
+          VITE_APP_URL: "https://chat.aliterra.space"
         run: npm run build
 
       - name: Create Capacitor config for CI
