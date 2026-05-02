@@ -54,7 +54,7 @@ const AliTerraIcon = () => (
 type Screen =
   | 'picker'       // wallet selection
   | 'connecting'   // waiting for MetaMask/Trust WC
-  | 'aliterra'     // waiting for address from wallet.aliterra.space
+  | 'aliterra'     // browser popup + postMessage flow (non-Capacitor)
   | 'connected';
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ export function WalletModal() {
     }
   }, [isWalletModalOpen, isConnected]);
 
-  // ── Connect MetaMask / Trust (Capacitor deep link) ───────────────────────
+  // ── Connect MetaMask / Trust (deep link) ─────────────────────────────────
   const handleConnect = async (wallet: 'metamask' | 'trust' | 'walletconnect') => {
     setConnectError(null);
     setConnectingFor(wallet);
@@ -113,15 +113,30 @@ export function WalletModal() {
     setScreen('picker');
   };
 
-  // ── AliTerra: open site + wait for postMessage ────────────────────────────
+  // ── AliTerra ──────────────────────────────────────────────────────────────
+  //
+  //  Capacitor mode: openAliTerraWallet() navigates the WebView to
+  //  wallet.aliterra.space — the whole app "leaves". On return, App.tsx
+  //  detects ?w3g_addr and calls connectAliTerra(). Modal just closes.
+  //
+  //  Browser mode: opens a popup, listens for postMessage, shows the
+  //  'aliterra' screen with address field + confirm button.
+
   const handleOpenAliTerra = () => {
     setConnectError(null);
     setPasteAddr('');
     setAliTerraGotAddress('');
-    setScreen('aliterra');
 
+    if (isCapacitor) {
+      // Navigate WebView — this page will reload when returning from wallet
+      // so we don't change screen state (it won't matter)
+      openAliTerraWallet(() => {});
+      return;
+    }
+
+    // Browser: popup + postMessage
+    setScreen('aliterra');
     const cancel = openAliTerraWallet((addr) => {
-      // postMessage received automatically
       setAliTerraGotAddress(addr);
       setPasteAddr(addr);
     });
@@ -181,8 +196,8 @@ export function WalletModal() {
     }
   };
 
-  // ── Wallet name helper ────────────────────────────────────────────────────
-  const walletName = connectingFor === 'metamask' ? 'MetaMask'
+  const walletName =
+    connectingFor === 'metamask' ? 'MetaMask'
     : connectingFor === 'trust' ? 'Trust Wallet'
     : 'WalletConnect';
 
@@ -242,10 +257,10 @@ export function WalletModal() {
                   <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-4">
                     <p className="text-xs text-gray-400 mb-2">Адрес кошелька</p>
                     <div className="flex items-center gap-2">
-                      <code className="text-sm font-mono text-gray-700 dark:text-gray-300 flex-1 text-center">
+                      <code className="text-sm font-mono text-gray-700 dark:text-gray-300 flex-1 text-center break-all">
                         {address?.slice(0, 10)}…{address?.slice(-8)}
                       </code>
-                      <button onClick={copyAddress} className="p-2.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl transition-colors">
+                      <button onClick={copyAddress} className="p-2.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl transition-colors shrink-0">
                         {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 text-gray-400" />}
                       </button>
                     </div>
@@ -256,7 +271,7 @@ export function WalletModal() {
                 </div>
               )}
 
-              {/* ═══════════════ CONNECTING (MetaMask/Trust deep link) ═══════════════ */}
+              {/* ═══════════════ CONNECTING ═══════════════ */}
               {screen === 'connecting' && (
                 <div className="py-8 text-center space-y-5">
                   <div className="relative inline-block">
@@ -294,7 +309,7 @@ export function WalletModal() {
                 </div>
               )}
 
-              {/* ═══════════════ ALITERRA — address pull ═══════════════ */}
+              {/* ═══════════════ ALITERRA (browser popup mode) ═══════════════ */}
               {screen === 'aliterra' && (
                 <div className="space-y-4 py-2">
                   {/* Status */}
@@ -335,7 +350,7 @@ export function WalletModal() {
                   {/* Address field */}
                   <div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      Адрес кошелька (вставьте вручную если не определился автоматически):
+                      Или вставьте адрес вручную:
                     </p>
                     <div className="flex gap-2">
                       <input
@@ -359,7 +374,6 @@ export function WalletModal() {
                     <p className="text-sm text-red-500 text-center">{connectError}</p>
                   )}
 
-                  {/* Confirm button */}
                   <button
                     onClick={handleConfirmAliTerra}
                     disabled={!pasteAddr.trim() && !aliTerraGotAddress}
@@ -391,7 +405,6 @@ export function WalletModal() {
                         Выберите кошелёк — приложение откроется автоматически
                       </p>
 
-                      {/* MetaMask */}
                       <WalletBtn
                         onClick={() => handleConnect('metamask')}
                         bg="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800"
@@ -400,7 +413,6 @@ export function WalletModal() {
                         subtitle="Открывает приложение MetaMask напрямую"
                       />
 
-                      {/* Trust Wallet */}
                       <WalletBtn
                         onClick={() => handleConnect('trust')}
                         bg="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
@@ -409,20 +421,19 @@ export function WalletModal() {
                         subtitle="Открывает приложение Trust Wallet напрямую"
                       />
 
-                      {/* Divider */}
                       <div className="flex items-center gap-3 pt-1">
                         <div className="flex-1 h-px bg-gray-100 dark:bg-gray-800" />
                         <span className="text-xs text-gray-400">или</span>
                         <div className="flex-1 h-px bg-gray-100 dark:bg-gray-800" />
                       </div>
 
-                      {/* AliTerra */}
+                      {/* AliTerra — navigates WebView to wallet site, returns via ?w3g_addr */}
                       <WalletBtn
                         onClick={handleOpenAliTerra}
                         bg="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700"
                         icon={<AliTerraIcon />}
                         title="AliTerra Wallet"
-                        subtitle="Адрес подтянется автоматически из wallet.aliterra.space"
+                        subtitle="Откроет wallet.aliterra.space и вернёт адрес автоматически"
                       />
                     </>
 
@@ -433,7 +444,6 @@ export function WalletModal() {
                         Подключитесь к Web3Gram на Polygon Mainnet
                       </p>
 
-                      {/* WalletConnect QR (desktop primary) */}
                       <WalletBtn
                         onClick={() => handleConnect('walletconnect')}
                         bg="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
@@ -442,32 +452,39 @@ export function WalletModal() {
                         subtitle="QR-код для MetaMask, Trust и любых других кошельков"
                       />
 
-                      {/* MetaMask extension */}
-                      <WalletBtn
-                        onClick={() => handleConnect('metamask')}
-                        bg="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800"
-                        icon={<MetaMaskIcon />}
-                        title="MetaMask"
-                        subtitle={hasMetaMask ? '✓ Расширение установлено' : 'Расширение для браузера'}
-                      />
+                      {hasMetaMask && (
+                        <WalletBtn
+                          onClick={() => handleConnect('metamask')}
+                          bg="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800"
+                          icon={<MetaMaskIcon />}
+                          title="MetaMask (расширение)"
+                          subtitle="Подключить браузерное расширение MetaMask"
+                        />
+                      )}
 
-                      {/* AliTerra */}
+                      <div className="flex items-center gap-3 pt-1">
+                        <div className="flex-1 h-px bg-gray-100 dark:bg-gray-800" />
+                        <span className="text-xs text-gray-400">или</span>
+                        <div className="flex-1 h-px bg-gray-100 dark:bg-gray-800" />
+                      </div>
+
                       <WalletBtn
                         onClick={handleOpenAliTerra}
                         bg="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700"
                         icon={<AliTerraIcon />}
                         title="AliTerra Wallet"
                         subtitle="Адрес подтянется автоматически из wallet.aliterra.space"
-                        badge={<ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />}
                       />
                     </>
                   )}
 
-                  <p className="text-xs text-center text-gray-300 dark:text-gray-600 px-4 pt-1">
-                    Подключая кошелёк, вы соглашаетесь с условиями использования
+                  {/* Security note */}
+                  <p className="text-center text-xs text-gray-400 dark:text-gray-600 pt-2">
+                    🔒 Мы никогда не запрашиваем приватные ключи
                   </p>
                 </div>
               )}
+
             </div>
           </motion.div>
         </>
@@ -476,27 +493,30 @@ export function WalletModal() {
   );
 }
 
+// ── Reusable wallet button ────────────────────────────────────────────────────
+
 function WalletBtn({
-  onClick, bg, icon, title, subtitle, badge,
+  onClick, bg, icon, title, subtitle,
 }: {
   onClick: () => void;
   bg: string;
   icon: React.ReactNode;
   title: string;
-  subtitle: React.ReactNode;
-  badge?: React.ReactNode;
+  subtitle: string;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3.5 py-3.5 px-4 ${bg} text-gray-800 dark:text-white rounded-2xl transition-all active:scale-[.98] hover:opacity-90`}
+      className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all active:scale-[0.98] ${bg}`}
     >
-      {icon}
-      <div className="text-left flex-1 min-w-0">
-        <div className="font-semibold text-sm">{title}</div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{subtitle}</div>
+      <div className="w-11 h-11 rounded-xl bg-white/60 dark:bg-black/20 flex items-center justify-center shadow-sm">
+        {icon}
       </div>
-      {badge}
+      <div className="flex-1 text-left">
+        <p className="font-semibold text-gray-900 dark:text-white text-sm">{title}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{subtitle}</p>
+      </div>
+      <ArrowRight className="w-4 h-4 text-gray-400 shrink-0" />
     </button>
   );
 }
