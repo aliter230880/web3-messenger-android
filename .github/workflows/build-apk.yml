@@ -110,6 +110,7 @@ jobs:
         env:
           VITE_WALLETCONNECT_PROJECT_ID: "2de1d724533083c2ed68197548dead4e"
           VITE_APP_URL: "https://chat.aliterra.space"
+          VITE_APP_PAGES_URL: "https://aliter230880.github.io/web3-messenger"
         run: npm run build
 
       - name: Create Capacitor config for CI
