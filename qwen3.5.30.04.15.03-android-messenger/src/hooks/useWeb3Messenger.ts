@@ -20,11 +20,22 @@ export function useWeb3Messenger() {
     async (connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>) => {
       const { provider, signer, address: addr, walletType } = connection;
 
+      // Preserve existing profile data (name / avatarId) set by the user
+      const existingUser = useAppStore.getState().currentUser;
+      const savedName    = existingUser?.name && existingUser.name !== 'Пользователь' ? existingUser.name : null;
+      const savedAvatarId = existingUser?.avatarId;
+
       if (!signer) {
         // Read-only (AliTerra) path — skip auth/xmtp/contracts
         setWallet({ isConnected: true, address: addr, chainId: 137, signer: null as any, provider: null as any });
         setE2EInitialized(false);
-        setCurrentUser({ id: addr, name: addr.slice(0, 8) + '…', walletAddress: addr, isOnline: true });
+        setCurrentUser({
+          id: addr,
+          name: savedName || addr.slice(0, 8) + '…',
+          avatarId: savedAvatarId,
+          walletAddress: addr,
+          isOnline: true,
+        });
         return;
       }
 
@@ -46,7 +57,8 @@ export function useWeb3Messenger() {
       setE2EInitialized(true);
       setCurrentUser({
         id: addr,
-        name: authData.address,
+        name: savedName || authData.address,
+        avatarId: savedAvatarId,
         walletAddress: addr,
         isOnline: true,
       });
