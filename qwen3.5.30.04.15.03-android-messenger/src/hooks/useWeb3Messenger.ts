@@ -7,7 +7,6 @@ import { contractService } from '../services/contractService';
 import { encryptionService } from '../services/encryptionService';
 
 export function useWeb3Messenger() {
-  // All Zustand selectors hoisted to top — stable hook order
   const { setWallet, setE2EInitialized, setCurrentUser } = useAppStore();
   const isConnected = useAppStore((s) => s.wallet.isConnected);
   const address = useAppStore((s) => s.wallet.address);
@@ -55,14 +54,11 @@ export function useWeb3Messenger() {
       try {
         let connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>;
 
-        if (walletType === 'walletconnect') {
-          // QR modal — for desktop / browser
+        if (walletType === 'trust') {
+          connection = await walletService.connectTrust();
+        } else if (walletType === 'walletconnect') {
           connection = await walletService.connectWalletConnect();
-        } else if (walletType === 'trust') {
-          // Trust Wallet deep-link (Capacitor / mobile)
-          connection = await walletService.connectViaDeepLink('trust');
         } else {
-          // MetaMask: extension on desktop, deep-link in Capacitor
           connection = await walletService.connectMetaMask();
         }
 
@@ -157,5 +153,6 @@ export function useWeb3Messenger() {
     isMobile: walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
+    openInWalletBrowser: walletService.openInWalletBrowser.bind(walletService),
   };
 }
