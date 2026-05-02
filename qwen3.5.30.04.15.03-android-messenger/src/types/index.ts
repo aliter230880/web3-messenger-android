@@ -4,6 +4,8 @@ export interface User {
   avatar?: string;
   avatarId?: number;
   walletAddress?: string | null;
+  /** ERC-4337 smart-wallet address from LoginFactory (may equal walletAddress if not yet deployed) */
+  smartWalletAddress?: string;
   isOnline: boolean;
   lastSeen?: Date;
 }
