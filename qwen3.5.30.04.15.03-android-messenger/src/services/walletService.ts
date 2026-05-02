@@ -16,47 +16,44 @@ const WC_PROJECT_ID =
 const APP_URL =
   (import.meta as any).env?.VITE_APP_URL || 'https://chat.aliterra.space';
 
-export type WalletType = 'metamask' | 'walletconnect' | 'trust';
-
-export interface WalletConnection {
-  provider: ethers.providers.Web3Provider;
-  signer: ethers.Signer;
-  address: string;
-  walletType: WalletType;
-}
-
-// 5 minutes — enough for: init(3s) + modal open + switch to wallet app +
-// navigate to scanner + approve + return to APK.
+// 5 minutes: MetaMask app open + user approves + return to APK
 const WC_TIMEOUT_MS = 5 * 60 * 1000;
 
-// ────────────────────────────────────────────────────────────────────────────
+export type WalletType = 'metamask' | 'walletconnect' | 'trust' | 'aliterra';
+
+export interface WalletConnection {
+  provider: ethers.providers.Web3Provider | null;
+  signer: ethers.Signer | null;
+  address: string;
+  walletType: WalletType;
+  readOnly?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Strategy summary
+//  ────────────────
+//  MetaMask (Capacitor)  → window.location.href = 'metamask://wc?uri=...'
+//    Capacitor's BridgeWebViewClient.shouldOverrideUrlLoading intercepts the
+//    custom scheme, calls bridge.launchIntent() → Android opens MetaMask via
+//    Intent(ACTION_VIEW). Returns `true` → WebView does NOT navigate,
+//    React state is fully preserved. WC session completes when user approves
+//    and returns (WC relay buffers the approval while APK is in background).
 //
-//  Wallet connection strategy
-//  ==========================
+//  Trust Wallet (Capacitor) → window.location.href = 'trust://wc?uri=...'
+//    Same mechanism, different scheme.
 //
-//  MetaMask / Trust Wallet  →  WalletConnect QR modal (showQrModal: true).
-//    The WC modal shows:
-//      • A QR code the user scans from the wallet's built-in scanner.
-//      • "Open MetaMask" / "Open Trust Wallet" deep-link buttons managed
-//        by the WC library itself (correct platform-specific scheme).
-//    This is the only reliable approach for Capacitor WebViews.
-//    Custom deep links via window.location.href / window.open('_system')
-//    break on Capacitor because '_system' is Cordova-only, and custom
-//    scheme navigation either kills the WebView or opens a browser.
-//
-//  AliTerra Wallet  →  opens wallet.aliterra.space externally.
-//    wallet.aliterra.space has a built-in QR scanner (html5-qrcode).
-//    After tapping this button the user:
-//      1. Comes back to Web3Gram and taps "WalletConnect QR".
-//      2. Scans the displayed QR from wallet.aliterra.space's scanner.
-//    (Full WC wallet-side SDK is needed on wallet.aliterra.space for this
-//    to establish a session — see openInWalletBrowser() notes.)
-//
-// ────────────────────────────────────────────────────────────────────────────
+//  AliTerra Wallet → opens wallet.aliterra.space?from=web3gram in new window.
+//    wallet.aliterra.space sends the user's address back via postMessage
+//    (requires the one-line snippet described in connectAliTerraWallet docs).
+//    Falls back to manual paste if postMessage unavailable (Capacitor/Chrome).
+// ─────────────────────────────────────────────────────────────────────────────
 
 class WalletService {
   private wcProvider: any = null;
   private activeWalletType: WalletType | null = null;
+  // Resolve callback for AliTerra postMessage flow
+  private _aliTerraResolve: ((address: string) => void) | null = null;
+  private _aliTerraListener: ((ev: MessageEvent) => void) | null = null;
 
   isCapacitor(): boolean {
     return typeof (window as any).Capacitor !== 'undefined';
@@ -72,21 +69,10 @@ class WalletService {
     return typeof window !== 'undefined' && Boolean((window as any).ethereum);
   }
 
-  // Opens wallet.aliterra.space in a new window/tab.
-  // The user can then use its QR scanner to scan the WC QR shown in Web3Gram.
-  openAliTerraWallet(): void {
-    const url = 'https://wallet.aliterra.space';
-    const w = window.open(url, '_blank');
-    if (!w) window.location.href = url;
-  }
-
   // ─── MetaMask ─────────────────────────────────────────────────────────────
-  // Desktop: MetaMask browser extension.
-  // Mobile/Capacitor: WC QR modal (the modal's built-in buttons handle deep links
-  // to MetaMask on both Android and iOS correctly).
 
   async connectMetaMask(): Promise<WalletConnection> {
-    // Desktop with extension
+    // Desktop: use browser extension if available
     if (!this.isCapacitor() && this.hasMetaMask()) {
       const win = window as any;
       const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
@@ -97,18 +83,114 @@ class WalletService {
       this.activeWalletType = 'metamask';
       return { provider, signer, address, walletType: 'metamask' };
     }
-    // Mobile/no-extension: fall through to WC QR
-    return this.connectWalletConnect();
+    // Mobile/Capacitor: direct app deep link
+    return this._connectMobileDeepLink('metamask');
   }
 
   // ─── Trust Wallet ─────────────────────────────────────────────────────────
+
   async connectTrust(): Promise<WalletConnection> {
+    if (this.isCapacitor()) {
+      return this._connectMobileDeepLink('trust');
+    }
     return this.connectWalletConnect();
   }
 
-  // ─── WalletConnect QR modal ───────────────────────────────────────────────
-  // Works for ALL wallets that support WalletConnect v2 scanning
-  // (MetaMask, Trust, Rainbow, Zerion, Coinbase Wallet, …)
+  // ─── Mobile direct deep link (no WC modal) ───────────────────────────────
+  //
+  //  1. Init EthereumProvider with showQrModal: false
+  //  2. On display_uri → fire metamask:// or trust:// deep link via
+  //     window.location.href (Capacitor intercepts → Intent → app opens)
+  //  3. Await wcProvider.connect() with 5-min timeout
+  //  4. visibilitychange listener prods the WC relay on return
+
+  private async _connectMobileDeepLink(
+    wallet: 'metamask' | 'trust'
+  ): Promise<WalletConnection> {
+    await this._cleanupWC();
+
+    const { EthereumProvider } = await import(
+      '@walletconnect/ethereum-provider'
+    );
+
+    this.wcProvider = await EthereumProvider.init({
+      projectId: WC_PROJECT_ID,
+      chains: [POLYGON_CHAIN_ID],
+      showQrModal: false, // we handle the deep link ourselves
+      metadata: {
+        name: 'Web3Gram',
+        description: 'Decentralized Messenger on Polygon',
+        url: APP_URL,
+        icons: [`${APP_URL}/favicon.ico`],
+      },
+    });
+
+    let deepLinkFired = false;
+
+    this.wcProvider.on('display_uri', (uri: string) => {
+      if (deepLinkFired) return;
+      deepLinkFired = true;
+
+      const encoded = encodeURIComponent(uri);
+
+      if (wallet === 'metamask') {
+        // Capacitor: shouldOverrideUrlLoading → bridge.launchIntent() → MetaMask
+        window.location.href = `metamask://wc?uri=${encoded}`;
+      } else {
+        // Trust Wallet scheme
+        window.location.href = `trust://wc?uri=${encoded}`;
+      }
+    });
+
+    // When the user returns to the APK after approving in the wallet,
+    // prod the WC relay to replay buffered events.
+    const _reconnectOnReturn = () => {
+      if (!document.hidden) {
+        try {
+          this.wcProvider
+            ?.signer?.client?.core?.relayer?.restartTransport?.();
+        } catch (_) {}
+      }
+    };
+    document.addEventListener('visibilitychange', _reconnectOnReturn);
+
+    try {
+      await Promise.race([
+        this.wcProvider.connect(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'Время ожидания 5 мин истекло — попробуйте ещё раз'
+                )
+              ),
+            WC_TIMEOUT_MS
+          )
+        ),
+      ]);
+    } finally {
+      document.removeEventListener('visibilitychange', _reconnectOnReturn);
+    }
+
+    const provider = new ethers.providers.Web3Provider(
+      this.wcProvider as any,
+      'any'
+    );
+    await this._switchToPolygon(provider);
+    const signer = provider.getSigner();
+    const address = await signer.getAddress();
+    this.activeWalletType = 'walletconnect';
+
+    this.wcProvider.on('disconnect', () => {
+      this.wcProvider = null;
+      this.activeWalletType = null;
+    });
+
+    return { provider, signer, address, walletType: 'walletconnect' };
+  }
+
+  // ─── WalletConnect QR modal (fallback / desktop) ──────────────────────────
 
   async connectWalletConnect(): Promise<WalletConnection> {
     await this._cleanupWC();
@@ -123,11 +205,8 @@ class WalletService {
       showQrModal: true,
       qrModalOptions: {
         themeMode: 'dark',
-        // Show MetaMask and Trust Wallet as recommended options in the modal
         explorerRecommendedWalletIds: [
-          // MetaMask
           'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96',
-          // Trust Wallet
           '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0',
         ],
         explorerExcludedWalletIds: 'ALL' as any,
@@ -167,18 +246,102 @@ class WalletService {
     return { provider, signer, address, walletType: 'walletconnect' };
   }
 
+  // ─── AliTerra Wallet ──────────────────────────────────────────────────────
+  //
+  //  Opens wallet.aliterra.space?from=web3gram in a popup/tab and waits for
+  //  the user's address to arrive via window.postMessage.
+  //
+  //  For this to work automatically, add this one snippet to wallet.aliterra.space
+  //  (anywhere before </body>):
+  //
+  //  ┌─────────────────────────────────────────────────────────────────┐
+  //  │  <script>                                                        │
+  //  │  (function(){                                                    │
+  //  │    if(!new URLSearchParams(location.search).has('from')) return; │
+  //  │    var t=setInterval(function(){                                 │
+  //  │      var a=window.wallet&&window.wallet.signer               │
+  //  │          ?window.wallet.signer._address||                       │
+  //  │            (window.wallet.provider&&                            │
+  //  │             window.wallet.provider.selectedAddress):null;       │
+  //  │      if(!a&&window.ethereum)a=ethereum.selectedAddress;         │
+  //  │      if(a){clearInterval(t);                                    │
+  //  │        (window.opener||window.parent)                           │
+  //  │          .postMessage({type:'WEB3GRAM_ADDRESS',address:a},'*'); │
+  //  │      }                                                          │
+  //  │    },600);                                                      │
+  //  │    setTimeout(function(){clearInterval(t);},120000);            │
+  //  │  })();                                                          │
+  //  │  </script>                                                      │
+  //  └─────────────────────────────────────────────────────────────────┘
+  //
+  //  In Capacitor (Chrome process ≠ WebView), postMessage is unavailable.
+  //  The WalletModal shows a "paste address" fallback in that case.
+
+  openAliTerraWallet(
+    onAddress: (address: string) => void
+  ): () => void {
+    // Clean up previous listener
+    this._cleanupAliTerraListener();
+
+    const listener = (ev: MessageEvent) => {
+      if (
+        ev.data?.type === 'WEB3GRAM_ADDRESS' &&
+        typeof ev.data?.address === 'string' &&
+        ev.data.address.startsWith('0x')
+      ) {
+        this._cleanupAliTerraListener();
+        onAddress(ev.data.address);
+      }
+    };
+
+    this._aliTerraListener = listener;
+    window.addEventListener('message', listener);
+
+    // Open the site
+    const url = 'https://wallet.aliterra.space/?from=web3gram';
+    const w = window.open(url, 'aliterra_wallet', 'width=440,height=680,noopener=false');
+    if (!w) {
+      // Popup blocked — open in same tab on Capacitor
+      window.open(url, '_blank');
+    }
+
+    // Return cancel function
+    return () => this._cleanupAliTerraListener();
+  }
+
+  // Read-only connection — address only, no signer (AliTerra)
+  createReadOnlyConnection(address: string): WalletConnection {
+    return {
+      provider: null,
+      signer: null,
+      address,
+      walletType: 'aliterra',
+      readOnly: true,
+    };
+  }
+
   // ─── Disconnect / Cancel ──────────────────────────────────────────────────
 
   async disconnect(): Promise<void> {
+    this._cleanupAliTerraListener();
     await this._cleanupWC();
     this.activeWalletType = null;
   }
 
   async cancelConnect(): Promise<void> {
+    this._cleanupAliTerraListener();
     await this._cleanupWC();
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────
+
+  private _cleanupAliTerraListener(): void {
+    if (this._aliTerraListener) {
+      window.removeEventListener('message', this._aliTerraListener);
+      this._aliTerraListener = null;
+    }
+    this._aliTerraResolve = null;
+  }
 
   private async _cleanupWC(): Promise<void> {
     if (this.wcProvider) {
