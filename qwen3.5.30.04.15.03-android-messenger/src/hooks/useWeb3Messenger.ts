@@ -15,9 +15,18 @@ export function useWeb3Messenger() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Finish any wallet connection that has a real signer ──────────────────
   const _finishConnect = useCallback(
     async (connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>) => {
       const { provider, signer, address: addr, walletType } = connection;
+
+      if (!signer) {
+        // Read-only (AliTerra) path — skip auth/xmtp/contracts
+        setWallet({ isConnected: true, address: addr, chainId: 137, signer: null as any, provider: null as any });
+        setE2EInitialized(false);
+        setCurrentUser({ id: addr, name: addr.slice(0, 8) + '…', walletAddress: addr, isOnline: true });
+        return;
+      }
 
       const authData = await authService.authenticate(signer);
 
@@ -28,7 +37,7 @@ export function useWeb3Messenger() {
       }
 
       try {
-        contractService.initialize(provider, signer);
+        contractService.initialize(provider!, signer);
       } catch (e) {
         console.warn('⚠️ Контракты:', e);
       }
@@ -47,6 +56,7 @@ export function useWeb3Messenger() {
     [setWallet, setE2EInitialized, setCurrentUser]
   );
 
+  // ── Standard wallet connect (MetaMask / Trust / WalletConnect) ──────────
   const connect = useCallback(
     async (walletType: WalletType = 'metamask') => {
       setIsConnecting(true);
@@ -74,6 +84,36 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
+  // ── AliTerra Wallet: address-only (read-only) connection ─────────────────
+  // Called after WalletModal receives the address via postMessage or paste.
+  const connectAliTerra = useCallback(
+    async (addr: string) => {
+      setIsConnecting(true);
+      setError(null);
+      try {
+        const connection = walletService.createReadOnlyConnection(addr);
+        await _finishConnect(connection);
+      } catch (err: any) {
+        console.error('❌ AliTerra:', err);
+        setError(err.message || 'Ошибка');
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [_finishConnect]
+  );
+
+  // ── openAliTerraWallet: opens the site, listens for postMessage ──────────
+  // Returns a cancel function. Calls onAddress(addr) when address arrives.
+  const openAliTerraWallet = useCallback(
+    (onAddress: (address: string) => void): (() => void) => {
+      return walletService.openAliTerraWallet(onAddress);
+    },
+    []
+  );
+
+  // ── Disconnect ────────────────────────────────────────────────────────────
   const disconnect = useCallback(async () => {
     try {
       await walletService.disconnect();
@@ -87,7 +127,7 @@ export function useWeb3Messenger() {
     }
   }, [setWallet, setE2EInitialized, setCurrentUser]);
 
-  // Cancel an in-progress WalletConnect session without touching app state.
+  // ── Cancel in-progress WC session ────────────────────────────────────────
   const cancelConnect = useCallback(async () => {
     try {
       await walletService.cancelConnect();
@@ -96,6 +136,7 @@ export function useWeb3Messenger() {
     setError(null);
   }, []);
 
+  // ── Messaging ─────────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (recipient: string, message: string) => {
     try {
       const encrypted = await encryptionService.encrypt(message, recipient);
@@ -150,7 +191,10 @@ export function useWeb3Messenger() {
 
   return {
     connect,
+    connectAliTerra,
+    openAliTerraWallet,
     disconnect,
+    cancelConnect,
     sendMessage,
     getMessages,
     registerProfile,
@@ -162,7 +206,5 @@ export function useWeb3Messenger() {
     isMobile: walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
-    openAliTerraWallet: walletService.openAliTerraWallet.bind(walletService),
-    cancelConnect,
   };
 }
