@@ -14,9 +14,14 @@ const WC_PROJECT_ID =
   '2f05ae7f1116030fde2d36508f472bfb';
 
 // Real domain for WalletConnect metadata — wallets reject "https://localhost"
-// Override via VITE_APP_URL at build time
+// chat.aliterra.space runs on Nginx (no auto-deploy from GH),
+// so we use GitHub Pages which always reflects the repo state immediately.
 const APP_URL =
-  (import.meta as any).env?.VITE_APP_URL || 'https://web2gram.app';
+  (import.meta as any).env?.VITE_APP_URL ||
+  'https://chat.aliterra.space';
+
+// /app/ landing page lives on GitHub Pages (200 OK, verified)
+const APP_PAGES_URL = 'https://aliter230880.github.io/web3-messenger';
 
 export type WalletType = 'metamask' | 'walletconnect' | 'trust';
 
@@ -27,11 +32,13 @@ export interface WalletConnection {
   walletType: WalletType;
 }
 
-// URLs to open the dApp *inside* each wallet's built-in browser
-// (the wallet injects window.ethereum there, so MetaMask/Trust extension works)
+// Open the dApp inside each wallet's built-in DApp browser.
+// Inside their browser window.ethereum is injected natively.
+// Trust Wallet: use open_url deep-link (opens dApp browser, not just browser).
+// MetaMask: metamask.app.link/dapp/<host> opens MetaMask DApp browser.
 export const WALLET_BROWSER_URLS: Record<string, string> = {
-  metamask: `https://metamask.app.link/dapp/${APP_URL.replace(/^https?:\/\//, '')}`,
-  trust: `https://link.trustwallet.com/browser?url=${encodeURIComponent(APP_URL)}`,
+  metamask: `https://metamask.app.link/dapp/chat.aliterra.space`,
+  trust: `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent('https://chat.aliterra.space')}`,
 };
 
 const WC_TIMEOUT_MS = 30_000;
