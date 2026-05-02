@@ -13,11 +13,10 @@ const WC_PROJECT_ID =
   (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID ||
   '2f05ae7f1116030fde2d36508f472bfb';
 
-// Universal links for wallets — open the app on Android/iOS
-const WALLET_DEEP_LINKS: Record<string, (uri: string) => string> = {
-  metamask: (uri) => `https://metamask.app.link/wc?uri=${encodeURIComponent(uri)}`,
-  trust: (uri) => `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`,
-};
+// Real domain for WalletConnect metadata — wallets reject "https://localhost"
+// Override via VITE_APP_URL at build time
+const APP_URL =
+  (import.meta as any).env?.VITE_APP_URL || 'https://web2gram.app';
 
 export type WalletType = 'metamask' | 'walletconnect' | 'trust';
 
@@ -28,11 +27,19 @@ export interface WalletConnection {
   walletType: WalletType;
 }
 
+// URLs to open the dApp *inside* each wallet's built-in browser
+// (the wallet injects window.ethereum there, so MetaMask/Trust extension works)
+export const WALLET_BROWSER_URLS: Record<string, string> = {
+  metamask: `https://metamask.app.link/dapp/${APP_URL.replace(/^https?:\/\//, '')}`,
+  trust: `https://link.trustwallet.com/browser?url=${encodeURIComponent(APP_URL)}`,
+};
+
+const WC_TIMEOUT_MS = 30_000;
+
 class WalletService {
   private wcProvider: any = null;
   private activeWalletType: WalletType | null = null;
 
-  /** True when running inside a Capacitor (APK) WebView */
   isCapacitor(): boolean {
     return typeof (window as any).Capacitor !== 'undefined';
   }
@@ -50,13 +57,13 @@ class WalletService {
   // ─── MetaMask ─────────────────────────────────────────────────────────────
 
   async connectMetaMask(): Promise<WalletConnection> {
-    // In Capacitor WebView there is no window.ethereum.
-    // Use WalletConnect deep-link to open MetaMask mobile app.
+    // In Capacitor there is no window.ethereum — WalletConnect QR is the
+    // correct way to connect MetaMask Mobile (user scans QR from MetaMask).
     if (this.isCapacitor() || !this.hasMetaMask()) {
-      return this.connectViaDeepLink('metamask');
+      return this.connectWalletConnect();
     }
 
-    // Desktop: browser extension path
+    // Desktop: use browser extension
     const win = window as any;
     const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
     await provider.send('eth_requestAccounts', []);
@@ -68,65 +75,16 @@ class WalletService {
     return { provider, signer, address, walletType: 'metamask' };
   }
 
-  // ─── WalletConnect deep-link (MetaMask / Trust in Capacitor) ──────────────
+  // ─── WalletConnect QR modal ───────────────────────────────────────────────
   //
-  // Flow:
-  //  1. Init WalletConnect WITHOUT showing the QR modal
-  //  2. Listen for `display_uri` → open the specific wallet app via universal link
-  //  3. User approves in the wallet app → enable() promise resolves
-  //  4. Return the connection
-
-  async connectViaDeepLink(wallet: 'metamask' | 'trust'): Promise<WalletConnection> {
-    const { default: EthereumProvider } = await import(
-      '@walletconnect/ethereum-provider'
-    );
-
-    await this._cleanupWC();
-
-    this.wcProvider = await EthereumProvider.init({
-      projectId: WC_PROJECT_ID,
-      chains: [POLYGON_CHAIN_ID],
-      showQrModal: false, // we open the wallet ourselves
-      metadata: {
-        name: 'Web2Gram',
-        description: 'Decentralized Messenger on Polygon',
-        url: 'https://web2gram.app',
-        icons: [],
-      },
-    });
-
-    // Open the wallet app as soon as the WC URI is ready
-    this.wcProvider.once('display_uri', (uri: string) => {
-      const link = WALLET_DEEP_LINKS[wallet]?.(uri);
-      if (!link) return;
-      // Use _blank so Capacitor/system opens the target app
-      // without navigating the WebView away
-      const opened = window.open(link, '_blank');
-      if (!opened) {
-        // Fallback: set location (works in some WebView versions)
-        window.location.href = link;
-      }
-    });
-
-    // enable() starts the session handshake and resolves when user approves
-    await this.wcProvider.enable();
-
-    const provider = new ethers.providers.Web3Provider(this.wcProvider, 'any');
-    await this._switchToPolygon(provider);
-
-    const signer = provider.getSigner();
-    const address = await signer.getAddress();
-    this.activeWalletType = wallet;
-
-    this.wcProvider.on('disconnect', () => {
-      this.wcProvider = null;
-      this.activeWalletType = null;
-    });
-
-    return { provider, signer, address, walletType: wallet };
-  }
-
-  // ─── WalletConnect QR modal (browser / desktop) ───────────────────────────
+  // This works for ALL mobile wallets (MetaMask Mobile, Trust, etc.):
+  //  1. QR modal opens inside the WebView
+  //  2. User opens their wallet app → Scanner → scans the QR code
+  //  3. Wallet app establishes the WC session
+  //  4. Provider resolves, app is connected
+  //
+  // KEY FIX: metadata.url must be a real HTTPS domain, not "https://localhost".
+  // Wallets silently reject sessions originating from localhost.
 
   async connectWalletConnect(): Promise<WalletConnection> {
     const { default: EthereumProvider } = await import(
@@ -140,21 +98,30 @@ class WalletService {
       chains: [POLYGON_CHAIN_ID],
       showQrModal: true,
       qrModalOptions: {
-        themeMode: 'light',
+        themeMode: 'dark',
         explorerRecommendedWalletIds: [
+          // MetaMask
           'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96',
+          // Trust Wallet
           '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0',
         ],
       },
       metadata: {
         name: 'Web2Gram',
         description: 'Decentralized Messenger on Polygon',
-        url: window.location.origin,
-        icons: [`${window.location.origin}/favicon.ico`],
+        // Must be a real domain — wallets reject localhost
+        url: APP_URL,
+        icons: [`${APP_URL}/favicon.ico`],
       },
     });
 
-    await this.wcProvider.connect();
+    // Timeout prevents infinite hang if user closes modal / connection fails
+    await Promise.race([
+      this.wcProvider.connect(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout: закройте и попробуйте ещё раз')), WC_TIMEOUT_MS)
+      ),
+    ]);
 
     const provider = new ethers.providers.Web3Provider(this.wcProvider, 'any');
     await this._switchToPolygon(provider);
@@ -171,6 +138,23 @@ class WalletService {
     return { provider, signer, address, walletType: 'walletconnect' };
   }
 
+  // Trust Wallet also uses WalletConnect QR in mobile context
+  async connectTrust(): Promise<WalletConnection> {
+    return this.connectWalletConnect();
+  }
+
+  // ─── Open wallet's built-in browser ──────────────────────────────────────
+  //
+  // Opens the dApp URL in MetaMask / Trust Wallet's built-in browser.
+  // Inside their browser window.ethereum is injected, so normal connection works.
+
+  openInWalletBrowser(wallet: 'metamask' | 'trust'): void {
+    const url = WALLET_BROWSER_URLS[wallet];
+    if (!url) return;
+    const opened = window.open(url, '_blank');
+    if (!opened) window.location.href = url;
+  }
+
   // ─── Disconnect ───────────────────────────────────────────────────────────
 
   async disconnect(): Promise<void> {
@@ -182,9 +166,7 @@ class WalletService {
 
   private async _cleanupWC(): Promise<void> {
     if (this.wcProvider) {
-      try {
-        await this.wcProvider.disconnect();
-      } catch (_) {}
+      try { await this.wcProvider.disconnect(); } catch (_) {}
       this.wcProvider = null;
     }
   }
