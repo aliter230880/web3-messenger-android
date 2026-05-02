@@ -87,6 +87,15 @@ export function useWeb3Messenger() {
     }
   }, [setWallet, setE2EInitialized, setCurrentUser]);
 
+  // Cancel an in-progress WalletConnect session without touching app state.
+  const cancelConnect = useCallback(async () => {
+    try {
+      await walletService.cancelConnect();
+    } catch (_) {}
+    setIsConnecting(false);
+    setError(null);
+  }, []);
+
   const sendMessage = useCallback(async (recipient: string, message: string) => {
     try {
       const encrypted = await encryptionService.encrypt(message, recipient);
@@ -154,5 +163,6 @@ export function useWeb3Messenger() {
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
     openInWalletBrowser: walletService.openInWalletBrowser.bind(walletService),
+    cancelConnect,
   };
 }
