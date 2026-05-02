@@ -124,7 +124,6 @@ jobs:
             "allowNavigation": [
               "*.walletconnect.com",
               "*.walletconnect.org",
-              "metamask.app.link",
               "*.infura.io"
             ],
             "server": {
