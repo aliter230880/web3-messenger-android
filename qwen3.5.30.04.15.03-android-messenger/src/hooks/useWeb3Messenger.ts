@@ -47,10 +47,25 @@ export function useWeb3Messenger() {
         console.warn('⚠️ XMTP:', e);
       }
 
+      // ── Инициализация контрактов + логин через LoginFactory ───────────────
+      let smartWalletAddress = addr; // fallback: использовать EOA напрямую
       try {
         contractService.initialize(provider!, signer);
+
+        // Выполнить логин через LoginFactory:
+        //  1. getAddress(addr, '0x')  → предсказать адрес смарт-кошелька (бесплатно)
+        //  2. isRegistered(sw)         → уже задеплоен?
+        //  3. createAccount(addr, '0x') → задеплоить если нет (gas)
+        const loginResult = await contractService.loginWithFactory(addr);
+        smartWalletAddress = loginResult.smartWalletAddress;
+
+        if (!loginResult.alreadyRegistered) {
+          console.log('🆕 Смарт-кошелёк создан на Polygon:', smartWalletAddress);
+        } else {
+          console.log('✅ Смарт-кошелёк найден в LoginFactory:', smartWalletAddress);
+        }
       } catch (e) {
-        console.warn('⚠️ Контракты:', e);
+        console.warn('⚠️ Контракты/LoginFactory:', e);
       }
 
       setWallet({ isConnected: true, address: addr, chainId: 137, signer, provider });
@@ -60,10 +75,12 @@ export function useWeb3Messenger() {
         name: savedName || authData.address,
         avatarId: savedAvatarId,
         walletAddress: addr,
+        // Сохраняем адрес смарт-кошелька как secondaryAddress
+        smartWalletAddress,
         isOnline: true,
       });
 
-      console.log(`✅ Подключено через ${walletType}:`, addr);
+      console.log(`✅ Подключено через ${walletType}:`, addr, '| SmartWallet:', smartWalletAddress);
     },
     [setWallet, setE2EInitialized, setCurrentUser]
   );
