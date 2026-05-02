@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Copy, Check, ArrowLeft, Smartphone, ExternalLink, QrCode } from 'lucide-react';
+import { X, Copy, Check, ArrowLeft, Smartphone, QrCode } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -44,7 +44,7 @@ export function WalletModal() {
   const { isWalletModalOpen, toggleWalletModal } = useAppStore();
   const {
     connect, disconnect, isConnecting, isConnected, address,
-    isCapacitor, hasMetaMask, openInWalletBrowser,
+    isCapacitor, hasMetaMask,
   } = useWeb3Messenger();
 
   const [copied, setCopied] = useState(false);
@@ -67,10 +67,6 @@ export function WalletModal() {
   const handleDisconnect = async () => {
     await disconnect();
     toggleWalletModal();
-  };
-
-  const handleOpenBrowser = (wallet: 'metamask' | 'trust') => {
-    openInWalletBrowser(wallet);
   };
 
   const copyAddress = () => {
@@ -153,12 +149,7 @@ export function WalletModal() {
                 </div>
               ) : (
                 /* ── Wallet picker ── */
-                <div className="space-y-4">
-                  <p className="text-center text-gray-500 dark:text-gray-400 text-sm px-2">
-                    {isCapacitor
-                      ? 'Откройте QR-код и отсканируйте его своим кошельком'
-                      : 'Выберите способ подключения к Polygon Mainnet'}
-                  </p>
+                <div className="space-y-3">
 
                   {/* Error */}
                   {connectError && (
@@ -167,90 +158,115 @@ export function WalletModal() {
                     </div>
                   )}
 
-                  {/* ── Primary: WalletConnect QR ── */}
-                  <button
-                    onClick={() => handleConnect('walletconnect')}
-                    disabled={isConnecting}
-                    className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
-                  >
-                    <WalletConnectIcon />
-                    <div className="text-left flex-1">
-                      <div className="font-semibold">WalletConnect</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                        <QrCode className="w-3 h-3" />
-                        {isCapacitor
-                          ? 'QR-код — отсканируй из MetaMask / Trust'
-                          : 'QR-код для любого кошелька'}
-                      </div>
-                    </div>
-                    {connectingType === 'walletconnect' && (
-                      <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
-                    )}
-                  </button>
-
-                  {/* ── Desktop: MetaMask extension ── */}
-                  {!isCapacitor && (
-                    <button
-                      onClick={() => handleConnect('metamask')}
-                      disabled={isConnecting}
-                      className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
-                    >
-                      <MetaMaskIcon />
-                      <div className="text-left flex-1">
-                        <div className="font-semibold">MetaMask</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                          {hasMetaMask ? <><span className="text-emerald-500">✓</span> Расширение обнаружено</> : 'Браузерное расширение'}
-                        </div>
-                      </div>
-                      {connectingType === 'metamask' && (
-                        <div className="w-5 h-5 border-2 border-orange-400/30 border-t-orange-500 rounded-full animate-spin shrink-0" />
-                      )}
-                    </button>
-                  )}
-
-                  {/* ── Mobile/Capacitor: Open in wallet browser ── */}
-                  {isCapacitor && (
-                    <div className="mt-2 space-y-2">
-                      <p className="text-xs text-gray-400 dark:text-gray-500 text-center px-2 pt-1">
-                        Или откройте Web2Gram прямо в браузере кошелька
+                  {/* ── Capacitor / mobile ── */}
+                  {isCapacitor ? (
+                    <>
+                      <p className="text-center text-gray-500 dark:text-gray-400 text-sm px-2 pb-1">
+                        Нажмите — откроется кошелёк для подтверждения.
+                        После одобрения вернитесь сюда.
                       </p>
 
-                      {/* MetaMask browser */}
+                      {/* MetaMask deep-link */}
                       <button
-                        onClick={() => handleOpenBrowser('metamask')}
-                        className="w-full flex items-center gap-4 py-3.5 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all"
+                        onClick={() => handleConnect('metamask')}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
                       >
                         <MetaMaskIcon />
                         <div className="text-left flex-1">
-                          <div className="font-semibold text-sm">Открыть в MetaMask</div>
+                          <div className="font-semibold">MetaMask</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <Smartphone className="w-3 h-3" />
-                            Встроенный браузер MetaMask
+                            Откроется MetaMask → подтвердите
                           </div>
                         </div>
-                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
+                        {connectingType === 'metamask' ? (
+                          <div className="w-5 h-5 border-2 border-orange-400/30 border-t-orange-500 rounded-full animate-spin shrink-0" />
+                        ) : null}
                       </button>
 
-                      {/* Trust Wallet browser */}
+                      {/* Trust Wallet deep-link */}
                       <button
-                        onClick={() => handleOpenBrowser('trust')}
-                        className="w-full flex items-center gap-4 py-3.5 px-5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-white font-medium rounded-2xl transition-all"
+                        onClick={() => handleConnect('trust')}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
                       >
                         <TrustWalletIcon />
                         <div className="text-left flex-1">
-                          <div className="font-semibold text-sm">Открыть в Trust Wallet</div>
+                          <div className="font-semibold">Trust Wallet</div>
                           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <Smartphone className="w-3 h-3" />
-                            Встроенный браузер Trust Wallet
+                            Откроется Trust Wallet → подтвердите
                           </div>
                         </div>
-                        <ExternalLink className="w-4 h-4 text-gray-400 shrink-0" />
+                        {connectingType === 'trust' ? (
+                          <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
+                        ) : null}
                       </button>
 
-                      <p className="text-xs text-center text-gray-400 dark:text-gray-500 px-4 pt-1">
-                        В браузере кошелька Web2Gram откроется с уже подключённым кошельком
+                      {/* WalletConnect QR — fallback for scanning from another device */}
+                      <button
+                        onClick={() => handleConnect('walletconnect')}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 py-3.5 px-5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl transition-all disabled:opacity-50"
+                      >
+                        <WalletConnectIcon />
+                        <div className="text-left flex-1">
+                          <div className="font-medium text-sm">QR-код (другое устройство)</div>
+                          <div className="text-xs text-gray-400 flex items-center gap-1">
+                            <QrCode className="w-3 h-3" />
+                            Сканировать из другого телефона
+                          </div>
+                        </div>
+                        {connectingType === 'walletconnect' ? (
+                          <div className="w-5 h-5 border-2 border-gray-400/30 border-t-gray-500 rounded-full animate-spin shrink-0" />
+                        ) : null}
+                      </button>
+                    </>
+                  ) : (
+                    /* ── Desktop / web ── */
+                    <>
+                      <p className="text-center text-gray-500 dark:text-gray-400 text-sm px-2 pb-1">
+                        Выберите способ подключения к Polygon Mainnet
                       </p>
-                    </div>
+
+                      {/* WalletConnect QR */}
+                      <button
+                        onClick={() => handleConnect('walletconnect')}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
+                      >
+                        <WalletConnectIcon />
+                        <div className="text-left flex-1">
+                          <div className="font-semibold">WalletConnect</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                            <QrCode className="w-3 h-3" />
+                            QR-код для любого кошелька
+                          </div>
+                        </div>
+                        {connectingType === 'walletconnect' && (
+                          <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
+                        )}
+                      </button>
+
+                      {/* MetaMask extension */}
+                      <button
+                        onClick={() => handleConnect('metamask')}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 py-4 px-5 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 text-gray-800 dark:text-white font-medium rounded-2xl transition-all disabled:opacity-50"
+                      >
+                        <MetaMaskIcon />
+                        <div className="text-left flex-1">
+                          <div className="font-semibold">MetaMask</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {hasMetaMask ? <><span className="text-emerald-500">✓</span> Расширение обнаружено</> : 'Браузерное расширение'}
+                          </div>
+                        </div>
+                        {connectingType === 'metamask' && (
+                          <div className="w-5 h-5 border-2 border-orange-400/30 border-t-orange-500 rounded-full animate-spin shrink-0" />
+                        )}
+                      </button>
+                    </>
                   )}
 
                   <p className="text-xs text-center text-gray-400 px-4 pt-1">
