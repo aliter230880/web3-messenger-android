@@ -34,11 +34,22 @@ export interface WalletConnection {
 
 // Open the dApp inside each wallet's built-in DApp browser.
 // Inside their browser window.ethereum is injected natively.
-// Trust Wallet: use open_url deep-link (opens dApp browser, not just browser).
-// MetaMask: metamask.app.link/dapp/<host> opens MetaMask DApp browser.
+//
+// MetaMask: metamask.app.link/dapp/<host> — universal link, opens DApp browser.
+// Trust Wallet: Android Intent URI with scheme=trust — fires an Android Intent
+//   directly to com.wallet.crypto.trustapp, bypassing the system browser entirely.
+//   The browser_fallback_url opens trustwallet.com if app not installed.
 export const WALLET_BROWSER_URLS: Record<string, string> = {
   metamask: `https://metamask.app.link/dapp/chat.aliterra.space`,
-  trust: `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent('https://chat.aliterra.space')}`,
+  trust: [
+    'intent://browser_enable',
+    '?url=https%3A%2F%2Fchat.aliterra.space',
+    '#Intent',
+    ';scheme=trust',
+    ';package=com.wallet.crypto.trustapp',
+    ';S.browser_fallback_url=https%3A%2F%2Ftrustwalletapp.com',
+    ';end',
+  ].join(''),
 };
 
 const WC_TIMEOUT_MS = 30_000;
@@ -114,7 +125,7 @@ class WalletService {
         ],
       },
       metadata: {
-        name: 'Web2Gram',
+        name: 'Web3Gram',
         description: 'Decentralized Messenger on Polygon',
         // Must be a real domain — wallets reject localhost
         url: APP_URL,
@@ -158,6 +169,12 @@ class WalletService {
   openInWalletBrowser(wallet: 'metamask' | 'trust'): void {
     const url = WALLET_BROWSER_URLS[wallet];
     if (!url) return;
+    // Android Intent URIs must use location.href — window.open won't fire the Intent.
+    // For https:// universal links, window.open is fine (opens external browser/app).
+    if (url.startsWith('intent://')) {
+      window.location.href = url;
+      return;
+    }
     const opened = window.open(url, '_blank');
     if (!opened) window.location.href = url;
   }
