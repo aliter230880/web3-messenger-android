@@ -17,7 +17,6 @@ const APP_URL =
   (import.meta as any).env?.VITE_APP_URL || 'https://chat.aliterra.space';
 
 export type WalletType = 'metamask' | 'walletconnect' | 'trust';
-export type WalletBrowserTarget = 'aliterra';
 
 export interface WalletConnection {
   provider: ethers.providers.Web3Provider;
@@ -26,8 +25,34 @@ export interface WalletConnection {
   walletType: WalletType;
 }
 
-// WC connection timeout in ms — 90 s gives enough time for user to approve.
-const WC_CONNECT_TIMEOUT = 90_000;
+// 5 minutes — enough for: init(3s) + modal open + switch to wallet app +
+// navigate to scanner + approve + return to APK.
+const WC_TIMEOUT_MS = 5 * 60 * 1000;
+
+// ────────────────────────────────────────────────────────────────────────────
+//
+//  Wallet connection strategy
+//  ==========================
+//
+//  MetaMask / Trust Wallet  →  WalletConnect QR modal (showQrModal: true).
+//    The WC modal shows:
+//      • A QR code the user scans from the wallet's built-in scanner.
+//      • "Open MetaMask" / "Open Trust Wallet" deep-link buttons managed
+//        by the WC library itself (correct platform-specific scheme).
+//    This is the only reliable approach for Capacitor WebViews.
+//    Custom deep links via window.location.href / window.open('_system')
+//    break on Capacitor because '_system' is Cordova-only, and custom
+//    scheme navigation either kills the WebView or opens a browser.
+//
+//  AliTerra Wallet  →  opens wallet.aliterra.space externally.
+//    wallet.aliterra.space has a built-in QR scanner (html5-qrcode).
+//    After tapping this button the user:
+//      1. Comes back to Web3Gram and taps "WalletConnect QR".
+//      2. Scans the displayed QR from wallet.aliterra.space's scanner.
+//    (Full WC wallet-side SDK is needed on wallet.aliterra.space for this
+//    to establish a session — see openInWalletBrowser() notes.)
+//
+// ────────────────────────────────────────────────────────────────────────────
 
 class WalletService {
   private wcProvider: any = null;
@@ -47,49 +72,44 @@ class WalletService {
     return typeof window !== 'undefined' && Boolean((window as any).ethereum);
   }
 
-  // ─── Open AliTerra wallet in browser (instant, no WC needed) ──────────────
-  openInWalletBrowser(_target: WalletBrowserTarget): void {
+  // Opens wallet.aliterra.space in a new window/tab.
+  // The user can then use its QR scanner to scan the WC QR shown in Web3Gram.
+  openAliTerraWallet(): void {
     const url = 'https://wallet.aliterra.space';
-    const opened = window.open(url, '_blank');
-    if (!opened) window.location.href = url;
+    const w = window.open(url, '_blank');
+    if (!w) window.location.href = url;
   }
 
   // ─── MetaMask ─────────────────────────────────────────────────────────────
-  // Capacitor (APK): WalletConnect deep-link via MetaMask universal link.
-  //   window.open(url, '_system') fires Android Intent ACTION_VIEW which opens
-  //   MetaMask via App-Links WITHOUT navigating the Capacitor WebView — the
-  //   React app stays alive, the WC session promise keeps running.
   // Desktop: MetaMask browser extension.
+  // Mobile/Capacitor: WC QR modal (the modal's built-in buttons handle deep links
+  // to MetaMask on both Android and iOS correctly).
 
   async connectMetaMask(): Promise<WalletConnection> {
-    if (this.isCapacitor()) {
-      return this._connectMobileWC('metamask');
+    // Desktop with extension
+    if (!this.isCapacitor() && this.hasMetaMask()) {
+      const win = window as any;
+      const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
+      await provider.send('eth_requestAccounts', []);
+      await this._switchToPolygon(provider);
+      const signer = provider.getSigner();
+      const address = await signer.getAddress();
+      this.activeWalletType = 'metamask';
+      return { provider, signer, address, walletType: 'metamask' };
     }
-    if (!this.hasMetaMask()) {
-      return this.connectWalletConnect();
-    }
-    const win = window as any;
-    const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
-    await provider.send('eth_requestAccounts', []);
-    await this._switchToPolygon(provider);
-    const signer = provider.getSigner();
-    const address = await signer.getAddress();
-    this.activeWalletType = 'metamask';
-    return { provider, signer, address, walletType: 'metamask' };
-  }
-
-  // ─── Trust Wallet ─────────────────────────────────────────────────────────
-  // Capacitor: WalletConnect deep-link via Trust universal link.
-  // Desktop: WC QR modal.
-
-  async connectTrust(): Promise<WalletConnection> {
-    if (this.isCapacitor()) {
-      return this._connectMobileWC('trust');
-    }
+    // Mobile/no-extension: fall through to WC QR
     return this.connectWalletConnect();
   }
 
-  // ─── WalletConnect QR (cross-device / desktop) ────────────────────────────
+  // ─── Trust Wallet ─────────────────────────────────────────────────────────
+  async connectTrust(): Promise<WalletConnection> {
+    return this.connectWalletConnect();
+  }
+
+  // ─── WalletConnect QR modal ───────────────────────────────────────────────
+  // Works for ALL wallets that support WalletConnect v2 scanning
+  // (MetaMask, Trust, Rainbow, Zerion, Coinbase Wallet, …)
+
   async connectWalletConnect(): Promise<WalletConnection> {
     await this._cleanupWC();
 
@@ -103,10 +123,14 @@ class WalletService {
       showQrModal: true,
       qrModalOptions: {
         themeMode: 'dark',
+        // Show MetaMask and Trust Wallet as recommended options in the modal
         explorerRecommendedWalletIds: [
+          // MetaMask
           'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96',
+          // Trust Wallet
           '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0',
         ],
+        explorerExcludedWalletIds: 'ALL' as any,
       },
       metadata: {
         name: 'Web3Gram',
@@ -120,109 +144,12 @@ class WalletService {
       this.wcProvider.connect(),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error('Время вышло. Попробуйте ещё раз.')),
-          WC_CONNECT_TIMEOUT
+          () => reject(new Error('Превышено время ожидания. Попробуйте ещё раз.')),
+          WC_TIMEOUT_MS
         )
       ),
     ]);
 
-    return this._finishWC();
-  }
-
-  async disconnect(): Promise<void> {
-    await this._cleanupWC();
-    this.activeWalletType = null;
-  }
-
-  // Cancel an in-progress connect — exposed for modal "Cancel" button.
-  async cancelConnect(): Promise<void> {
-    await this._cleanupWC();
-  }
-
-  // ─── Mobile WalletConnect deep-link ───────────────────────────────────────
-  //
-  // How it works (Capacitor + Android):
-  //  1. EthereumProvider.init() creates a WC session on the relay.
-  //  2. 'display_uri' fires with the wc: URI.
-  //  3. We build an HTTPS universal link (metamask.app.link / link.trustwallet.com)
-  //     and call window.open(url, '_system').
-  //  4. Capacitor's BridgeWebViewClient sees '_system' and calls
-  //     startActivity(Intent.ACTION_VIEW, url).
-  //  5. Android resolves the App-Link → opens MetaMask / Trust Wallet.
-  //  6. The wallet shows a "Connect to Web3Gram" screen.
-  //  7. User approves → wallet sends WC session approval to the relay.
-  //  8. wcProvider.connect() promise resolves in the STILL-RUNNING React app.
-  //  9. APK shows "Connected" with the wallet address.
-  //
-  // The WebView is NEVER navigated away — only an Intent is fired externally.
-
-  private async _connectMobileWC(
-    wallet: 'metamask' | 'trust'
-  ): Promise<WalletConnection> {
-    await this._cleanupWC();
-
-    const { EthereumProvider } = await import(
-      '@walletconnect/ethereum-provider'
-    );
-
-    this.wcProvider = await EthereumProvider.init({
-      projectId: WC_PROJECT_ID,
-      chains: [POLYGON_CHAIN_ID],
-      showQrModal: false, // we handle deep-link ourselves
-      metadata: {
-        name: 'Web3Gram',
-        description: 'Decentralized Messenger on Polygon',
-        url: APP_URL,
-        icons: [`${APP_URL}/favicon.ico`],
-      },
-    });
-
-    let deepLinkFired = false;
-
-    this.wcProvider.on('display_uri', (uri: string) => {
-      if (deepLinkFired) return; // fire only once
-      deepLinkFired = true;
-
-      const encoded = encodeURIComponent(uri);
-      const universalLink =
-        wallet === 'metamask'
-          ? `https://metamask.app.link/wc?uri=${encoded}`
-          : `https://link.trustwallet.com/wc?uri=${encoded}`;
-
-      // '_system' = Capacitor fires Intent.ACTION_VIEW (App-Links aware).
-      // This opens MetaMask/Trust WITHOUT navigating the WebView.
-      const opened = window.open(universalLink, '_system');
-
-      if (!opened) {
-        // Fallback: anchor-click approach (also doesn't navigate current page)
-        const a = document.createElement('a');
-        a.href = universalLink;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          if (document.body.contains(a)) document.body.removeChild(a);
-        }, 500);
-      }
-    });
-
-    await Promise.race([
-      this.wcProvider.connect(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Время ожидания истекло. Откройте кошелёк и подтвердите подключение, затем попробуйте снова.')),
-          WC_CONNECT_TIMEOUT
-        )
-      ),
-    ]);
-
-    return this._finishWC();
-  }
-
-  // ─── Internals ─────────────────────────────────────────────────────────────
-
-  private async _finishWC(): Promise<WalletConnection> {
     const provider = new ethers.providers.Web3Provider(
       this.wcProvider as any,
       'any'
@@ -239,6 +166,19 @@ class WalletService {
 
     return { provider, signer, address, walletType: 'walletconnect' };
   }
+
+  // ─── Disconnect / Cancel ──────────────────────────────────────────────────
+
+  async disconnect(): Promise<void> {
+    await this._cleanupWC();
+    this.activeWalletType = null;
+  }
+
+  async cancelConnect(): Promise<void> {
+    await this._cleanupWC();
+  }
+
+  // ─── Internals ────────────────────────────────────────────────────────────
 
   private async _cleanupWC(): Promise<void> {
     if (this.wcProvider) {
