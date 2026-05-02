@@ -16,7 +16,10 @@ const WC_PROJECT_ID =
 const APP_URL =
   (import.meta as any).env?.VITE_APP_URL || 'https://chat.aliterra.space';
 
-const WC_TIMEOUT_MS = 5 * 60 * 1000;
+// Init timeout — if WC relay doesn't respond in 12s, give up
+const WC_INIT_TIMEOUT_MS = 12_000;
+// Session approval timeout — 5 minutes
+const WC_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type WalletType = 'metamask' | 'walletconnect' | 'trust' | 'aliterra';
 
@@ -29,24 +32,18 @@ export interface WalletConnection {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Connection strategy
-//  ───────────────────
-//  Capacitor Android:
-//    MetaMask  → window.location.href = 'metamask://wc?uri=...'
-//                Capacitor BridgeWebViewClient.shouldOverrideUrlLoading
-//                intercepts custom scheme → bridge.launchIntent(ACTION_VIEW)
-//                Android opens MetaMask, WebView stays intact.
-//    Trust     → same with 'trust://wc?uri=...'
-//    AliTerra  → navigate WebView to wallet.aliterra.space?from=web3gram&return=ORIGIN
-//                After unlock, wallet redirects back: ORIGIN?w3g_addr=0x...
-//                App.tsx detects and calls connectAliTerra().
+//  Стратегия подключения
 //
-//  Browser (desktop / web app):
-//    MetaMask extension present → window.ethereum
-//    No extension              → WC session, URI exposed via onDisplayUri callback
-//                                WalletModal renders QR + app-link buttons.
-//    Trust / WalletConnect     → same QR flow
-//    AliTerra                  → window.open popup + postMessage
+//  Capacitor Android:
+//    1. EthereumProvider.init() — с таймаутом 12 сек
+//    2. На display_uri:
+//       MetaMask → window.location.href = 'metamask://wc?uri=...'
+//       Trust    → window.location.href = 'trust://wc?uri=...'
+//    3. Пользователь подтверждает в кошельке → возвращается в приложение
+//
+//  Браузер:
+//    MetaMask extension → window.ethereum
+//    Иначе → WC QR через onDisplayUri callback
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WalletService {
@@ -57,8 +54,7 @@ class WalletService {
   /**
    * Browser-mode QR display hook.
    * WalletModal sets this before calling connect(); the service fires it with
-   * the WalletConnect URI so the modal can render a QR code without needing
-   * the @walletconnect/modal package.
+   * the WalletConnect URI so the modal can render a QR code.
    */
   public onDisplayUri: ((uri: string) => void) | null = null;
 
@@ -79,7 +75,6 @@ class WalletService {
   // ─── MetaMask ─────────────────────────────────────────────────────────────
 
   async connectMetaMask(): Promise<WalletConnection> {
-    // Desktop browser with MetaMask extension
     if (!this.isCapacitor() && this.hasMetaMask()) {
       const win = window as any;
       const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
@@ -107,12 +102,13 @@ class WalletService {
 
   // ─── Unified WC connect ───────────────────────────────────────────────────
   //
-  //  Capacitor path: fires metamask:// or trust:// deep link via
-  //  window.location.href — intercepted by BridgeWebViewClient → Intent →
-  //  wallet app opens, WebView state preserved. Returns on visibilitychange.
+  //  Key fix: EthereumProvider.init() may hang if WC relay WebSocket is slow.
+  //  We race it against a 12-second timeout so the user sees an error instead
+  //  of an infinite spinner.
   //
-  //  Browser path: calls this.onDisplayUri(uri) so WalletModal can show the
-  //  WC URI as a QR code + "Open in app" buttons without any extra packages.
+  //  display_uri fires as soon as WC generates a pairing URI (right after
+  //  .connect() is called, before the wallet approves). We handle it
+  //  immediately without waiting for session approval.
 
   private async _connectWC(
     wallet: 'metamask' | 'trust' | 'walletconnect'
@@ -123,7 +119,8 @@ class WalletService {
       '@walletconnect/ethereum-provider'
     );
 
-    this.wcProvider = await EthereumProvider.init({
+    // ── Step 1: init with timeout ────────────────────────────────────────────
+    const initPromise = EthereumProvider.init({
       projectId: WC_PROJECT_ID,
       chains: [POLYGON_CHAIN_ID],
       showQrModal: false,
@@ -135,6 +132,18 @@ class WalletService {
       },
     });
 
+    const initTimeout = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error('WalletConnect не отвечает (12 сек). Проверьте интернет-соединение и попробуйте ещё раз.')),
+        WC_INIT_TIMEOUT_MS
+      )
+    );
+
+    this.wcProvider = await Promise.race([initPromise, initTimeout]);
+
+    // ── Step 2: register display_uri BEFORE calling connect() ────────────────
+    //   This is critical — the event fires synchronously after connect() starts
+    //   and must be registered beforehand.
     let deepLinkFired = false;
 
     this.wcProvider.on('display_uri', (uri: string) => {
@@ -144,23 +153,23 @@ class WalletService {
       const encoded = encodeURIComponent(uri);
 
       if (this.isCapacitor()) {
-        // Capacitor: custom scheme → BridgeWebViewClient → Intent → wallet app
+        // Capacitor: fire deep-link → Android intercepts → opens wallet app
         if (wallet === 'metamask') {
           window.location.href = `metamask://wc?uri=${encoded}`;
         } else if (wallet === 'trust') {
           window.location.href = `trust://wc?uri=${encoded}`;
         } else {
-          // Generic WC: try MetaMask as default
+          // Generic WC: try MetaMask, fall back to universal link
           window.location.href = `metamask://wc?uri=${encoded}`;
         }
       } else {
-        // Browser: hand URI to WalletModal for QR / link display
+        // Browser: pass URI to WalletModal for QR display
         this.onDisplayUri?.(uri);
       }
     });
 
-    // Prod WC relay after returning from wallet app (Capacitor)
-    const _reconnectOnReturn = () => {
+    // Reconnect relay when user returns from wallet app (Capacitor)
+    const _onVisibilityChange = () => {
       if (document.hidden || !this.wcProvider) return;
       try {
         const core = this.wcProvider?.signer?.client?.core;
@@ -171,20 +180,21 @@ class WalletService {
         }
       } catch (_) {}
     };
-    document.addEventListener('visibilitychange', _reconnectOnReturn);
+    document.addEventListener('visibilitychange', _onVisibilityChange);
 
+    // ── Step 3: connect() — waits for wallet approval ────────────────────────
     try {
       await Promise.race([
         this.wcProvider.connect(),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Время ожидания 5 мин истекло — попробуйте ещё раз')),
-            WC_TIMEOUT_MS
+            () => reject(new Error('Время ожидания истекло. Откройте кошелёк и подтвердите подключение, затем попробуйте ещё раз.')),
+            WC_SESSION_TIMEOUT_MS
           )
         ),
       ]);
     } finally {
-      document.removeEventListener('visibilitychange', _reconnectOnReturn);
+      document.removeEventListener('visibilitychange', _onVisibilityChange);
       this.onDisplayUri = null;
     }
 
@@ -206,12 +216,6 @@ class WalletService {
   }
 
   // ─── AliTerra Wallet ──────────────────────────────────────────────────────
-  //
-  //  Capacitor: navigate WebView to wallet.aliterra.space (allowed via
-  //  allowNavigation config). After unlock, wallet redirects to
-  //  ORIGIN?w3g_addr=0x... → App.tsx detects and calls connectAliTerra().
-  //
-  //  Browser: window.open popup + postMessage {type:'WEB3GRAM_ADDRESS'}.
 
   openAliTerraWallet(onAddress: (address: string) => void): () => void {
     this._cleanupAliTerraListener();
