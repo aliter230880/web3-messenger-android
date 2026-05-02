@@ -150,11 +150,43 @@ jobs:
         working-directory: qwen3.5.30.04.15.03-android-messenger
         run: npx cap sync android
 
+      - name: Patch network_security_config — allow WalletConnect relay
+        working-directory: qwen3.5.30.04.15.03-android-messenger/android/app/src/main/res/xml
+        run: |
+          cat > network_security_config.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                      <certificates src="user" />
+                  </trust-anchors>
+              </base-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="true">walletconnect.com</domain>
+                  <domain includeSubdomains="true">walletconnect.org</domain>
+                  <domain includeSubdomains="true">relay.walletconnect.com</domain>
+                  <domain includeSubdomains="true">relay.walletconnect.org</domain>
+                  <domain includeSubdomains="true">explorer-api.walletconnect.com</domain>
+                  <domain includeSubdomains="true">verify.walletconnect.com</domain>
+                  <domain includeSubdomains="true">pulse.walletconnect.org</domain>
+                  <domain includeSubdomains="true">chat.aliterra.space</domain>
+                  <domain includeSubdomains="true">wallet.aliterra.space</domain>
+                  <domain includeSubdomains="true">aliterra.space</domain>
+                  <domain includeSubdomains="true">polygon-rpc.com</domain>
+                  <domain includeSubdomains="true">rpc-mainnet.matic.network</domain>
+                  <domain includeSubdomains="true">localhost</domain>
+                  <domain includeSubdomains="true">127.0.0.1</domain>
+                  <domain includeSubdomains="true">10.0.2.2</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+          echo "network_security_config.xml patched"
+
       - name: Patch AndroidManifest — deep links + intent filters
         working-directory: qwen3.5.30.04.15.03-android-messenger/android/app/src/main
         run: |
           MANIFEST="AndroidManifest.xml"
-          # Add QUERY intents for MetaMask, Trust, AliTerra deep-links (Android 11+)
           if ! grep -q "metamask" "$MANIFEST"; then
             sed -i 's|</manifest>|    <queries>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="metamask"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="trust"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="wc"/></intent>\n    </queries>\n</manifest>|' "$MANIFEST"
             echo "AndroidManifest patched with deep-link queries"
