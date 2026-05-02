@@ -1,0 +1,2242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AliTerra Wallet</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid rgba(0,0,0,0.25); border-top-color: #000;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast {
+      padding: 12px 18px; border-radius: 14px; font-size: 13px;
+      font-weight: 500; backdrop-filter: blur(16px);
+      animation: slideIn 0.3s ease;
+    }
+    .toast-success { background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.35); color: #34d399; }
+    .toast-error   { background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.35); color: #f87171; }
+    .toast-info    { background: rgba(251,191,36,0.12);  border: 1px solid rgba(251,191,36,0.35);  color: #fbbf24; }
+
+    @keyframes slideIn { from { transform: translateX(60px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes fadeIn  { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+      z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-box {
+      background: rgb(18,18,20); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 28px; padding: 28px; width: 100%; max-width: 400px;
+      max-height: 88vh; overflow-y: auto; animation: fadeIn 0.2s ease;
+    }
+    .modal-box::-webkit-scrollbar { width: 3px; }
+
+    .input-field {
+      width: 100%; background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 16px;
+      padding: 12px 16px; color: white; font-size: 14px;
+      outline: none; transition: border-color 0.2s; box-sizing: border-box;
+    }
+    .input-field:focus { border-color: rgba(251,191,36,0.45); }
+    .input-field::placeholder { color: rgba(255,255,255,0.28); }
+    textarea.input-field { resize: vertical; min-height: 80px; }
+    select.input-field { cursor: pointer; }
+    select.input-field option { background: rgb(18,18,20); color: white; }
+
+    .action-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 7px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px; padding: 14px 10px; cursor: pointer;
+      transition: all 0.2s; color: white; font-size: 12px; font-weight: 500; flex: 1;
+    }
+    .action-btn:hover { background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.35); color: #fbbf24; }
+    .action-btn .icon { font-size: 20px; }
+
+    .tab-btn {
+      flex: 1; padding: 10px; font-size: 13px; font-weight: 500;
+      border-radius: 16px; border: 1px solid transparent;
+      color: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.2s;
+      background: transparent;
+    }
+    .tab-btn.active {
+      background: rgba(251,191,36,0.12); color: #fbbf24;
+      border-color: rgba(251,191,36,0.25);
+    }
+
+    .token-item {
+      display: flex; align-items: center; gap: 12px; padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .token-item:last-child { border-bottom: none; }
+
+    .tx-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .tx-item:last-child { border-bottom: none; }
+
+    .mnemonic-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .mnemonic-word {
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 8px 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .mnemonic-num { color: rgba(255,255,255,0.3); font-size: 10px; min-width: 14px; }
+    .mnemonic-word span:last-child { font-size: 12px; font-family: monospace; }
+
+    .network-pill {
+      background: rgba(251,191,36,0.12); color: #fbbf24;
+      border: 1px solid rgba(251,191,36,0.3);
+      padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    }
+
+    .qr-placeholder {
+      background: white; border-radius: 16px; padding: 20px;
+      font-family: monospace; font-size: 9px; color: #333;
+      word-break: break-all; text-align: center; line-height: 1.5;
+      min-height: 140px; display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Glow effect on balance */
+    .balance-glow {
+      text-shadow: 0 0 30px rgba(251,191,36,0.3);
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen">
+
+  <!-- Toast container -->
+  <div id="toastContainer"
+    style="position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:300px;"></div>
+
+  <!-- ════════════════════════════════════════════
+       SCREEN: SETUP
+  ════════════════════════════════════════════ -->
+  <div id="screen-setup" class="hidden min-h-screen flex flex-col items-center justify-center p-6">
+    <div class="w-full max-w-xs">
+
+      <!-- Logo -->
+      <div class="flex flex-col items-center mb-10">
+        <div class="relative mb-5">
+          <div class="absolute inset-0 rounded-full bg-yellow-400/20 blur-2xl scale-150"></div>
+          <img src="logo.png" alt="AliTerra"
+            class="relative w-24 h-24 rounded-full object-cover shadow-2xl shadow-yellow-400/30 border border-yellow-400/20">
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight mb-1">AliTerra Wallet</h1>
+        <p class="text-zinc-500 text-sm">Your crypto, your keys</p>
+      </div>
+
+      <!-- Network selector -->
+      <div class="mb-5">
+        <label class="text-zinc-500 text-xs block text-center mb-2">Select Network</label>
+        <select id="networkSelectSetup" onchange="onNetworkSelectChange(this.value)"
+          class="input-field text-center">
+          <option value="1">Ethereum Mainnet</option>
+          <option value="137" selected>Polygon</option>
+          <option value="56">BSC</option>
+        </select>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex flex-col gap-3">
+        <button onclick="wallet.createNewWallet()"
+          class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-3xl transition text-base">
+          ✦ Create New Wallet
+        </button>
+        <button onclick="showModal('importModal')"
+          class="w-full py-4 glass border border-white/10 hover:border-white/20 text-white font-semibold rounded-3xl transition text-base">
+          📥 Import Wallet
+        </button>
+      </div>
+
+      <p class="text-center text-zinc-700 text-xs mt-8">
+        AliTerra Wallet v1.0 •
+        <a href="https://aliterra.space" target="_blank" class="hover:text-yellow-400 transition">aliterra.space</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════
+       SCREEN: DASHBOARD
+  ════════════════════════════════════════════ -->
+  <div id="screen-dashboard" class="hidden min-h-screen">
+    <div class="max-w-sm mx-auto p-4 pb-10 flex flex-col gap-4">
+
+      <!-- Top bar -->
+      <div class="flex items-center justify-between pt-2">
+        <div class="flex items-center gap-2.5">
+          <img src="logo.png" alt="AliTerra" class="w-8 h-8 rounded-full object-cover border border-yellow-400/20">
+          <span class="font-semibold text-sm tracking-tight">AliTerra Wallet</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="network-pill" id="networkBadge">Polygon</span>
+          <!-- 3-dot menu -->
+          <div class="relative" id="menuWrapper">
+            <button onclick="toggleMenu()"
+              class="w-9 h-9 rounded-full glass border border-white/10 hover:border-white/20 flex items-center justify-center transition">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="5"  r="1.5"/>
+                <circle cx="12" cy="12" r="1.5"/>
+                <circle cx="12" cy="19" r="1.5"/>
+              </svg>
+            </button>
+            <div id="dropdownMenu"
+              class="hidden absolute right-0 top-11 bg-zinc-900 border border-white/10
+                     rounded-2xl py-1.5 w-44 z-50 shadow-2xl overflow-hidden">
+              <div onclick="showSettingsModal()"
+                class="px-4 py-3 hover:bg-white/8 cursor-pointer text-sm flex items-center gap-3 transition">
+                <span>⚙️</span> Settings
+              </div>
+              <div onclick="wallet.disconnect()"
+                class="px-4 py-3 hover:bg-red-500/10 cursor-pointer text-sm text-red-400 flex items-center gap-3 transition">
+                <span>🚪</span> Log Out
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Balance Card -->
+      <div class="glass border border-white/10 rounded-3xl p-6 relative overflow-hidden">
+        <!-- Decorative glows -->
+        <div class="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-yellow-400/8 blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-8 -left-8 w-24 h-24 rounded-full bg-blue-500/5 blur-3xl pointer-events-none"></div>
+
+        <p class="text-zinc-500 text-xs mb-2 uppercase tracking-wider">Balance</p>
+        <div class="flex items-baseline gap-2.5 mb-4">
+          <span id="balanceValue" class="text-4xl font-bold balance-glow">0.0000</span>
+          <span id="balanceCurrency" class="text-zinc-400 text-xl font-medium">POL</span>
+        </div>
+
+        <!-- Address row -->
+        <div class="flex items-center gap-2 bg-white/5 rounded-2xl px-4 py-2.5 border border-white/8">
+          <span id="addressDisplay"
+            class="font-mono text-xs text-zinc-400 flex-1 truncate select-all">0x...</span>
+          <button onclick="copyAddress()"
+            class="text-zinc-500 hover:text-yellow-400 transition shrink-0 p-1 rounded-lg hover:bg-white/5"
+            title="Copy address">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="flex gap-3">
+        <button onclick="showSendModal()" class="action-btn">
+          <span class="icon">📤</span><span>Send</span>
+        </button>
+        <button onclick="showReceiveModal()" class="action-btn">
+          <span class="icon">📥</span><span>Receive</span>
+        </button>
+        <button onclick="openQrScanner()" class="action-btn">
+          <span class="icon">📷</span><span>Scan</span>
+        </button>
+        <button onclick="openLuxExchange()" class="action-btn">
+          <span class="icon">✦</span><span>LUX</span>
+        </button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex gap-2 bg-zinc-900 rounded-2xl p-1">
+        <button onclick="switchTab('tokens')" id="tab-tokens" class="tab-btn active">
+          Tokens
+        </button>
+        <button onclick="switchTab('activity')" id="tab-activity" class="tab-btn">
+          Activity
+        </button>
+      </div>
+
+      <!-- Tokens tab -->
+      <div id="tab-content-tokens">
+        <div class="glass border border-white/10 rounded-3xl p-5">
+          <div id="tokensList">
+            <p class="text-zinc-600 text-sm text-center py-6">No tokens added yet</p>
+          </div>
+          <button onclick="renderPopularTokens(); showModal('addTokenModal')"
+            class="w-full mt-4 py-3 border border-dashed border-white/15 rounded-2xl
+                   text-zinc-500 hover:text-yellow-400 hover:border-yellow-400/30
+                   transition text-sm font-medium">
+            + Add Token
+          </button>
+        </div>
+      </div>
+
+      <!-- Activity tab -->
+      <div id="tab-content-activity" class="hidden">
+        <div class="glass border border-white/10 rounded-3xl p-5">
+          <div class="flex justify-between items-center mb-3">
+            <p class="text-zinc-500 text-xs">Transaction History</p>
+            <button onclick="wallet.fetchBlockchainTransactions()" class="text-xs text-yellow-400 hover:text-yellow-300 transition">↻ Refresh</button>
+          </div>
+          <div id="transactionsList">
+            <p class="text-zinc-600 text-sm text-center py-6">No transactions yet</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ════════════════════════════════════════════
+       MODALS
+  ════════════════════════════════════════════ -->
+
+  <!-- ── IMPORT ── -->
+  <div id="importModal" class="modal-overlay hidden" onclick="overlayClick(event,'importModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Import Wallet</h3>
+        <button onclick="hideModal('importModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+      <p class="text-zinc-500 text-sm mb-4">Enter your private key (0x…) or seed phrase (12/24 words)</p>
+      <div class="mb-5">
+        <textarea id="importData" class="input-field" rows="4"
+          placeholder="0x... or word1 word2 word3 ..."></textarea>
+      </div>
+      <button onclick="wallet.importWallet()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition">
+        Import Wallet
+      </button>
+    </div>
+  </div>
+
+  <!-- ── MNEMONIC ── -->
+  <div id="mnemonicModal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3 class="text-lg font-bold mb-3 text-center">Your Seed Phrase</h3>
+      <div class="bg-yellow-400/10 border border-yellow-400/25 rounded-2xl p-4 mb-5">
+        <p class="text-yellow-400 text-sm leading-relaxed">
+          ⚠️ Write these 12 words down and store them somewhere safe. Anyone who has them can access your wallet.
+        </p>
+      </div>
+      <div id="mnemonicGrid" class="mnemonic-grid mb-6"></div>
+      <button onclick="hideModal('mnemonicModal'); showModal('passwordSetupModal');"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition">
+        ✓ I've Saved My Seed Phrase
+      </button>
+    </div>
+  </div>
+
+  <!-- ── PASSWORD SETUP ── -->
+  <div id="passwordSetupModal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3 class="text-lg font-bold mb-2">Set a Password</h3>
+      <p class="text-zinc-500 text-sm mb-5">
+        Protects your wallet on this device. You'll need it each time you open the app.
+      </p>
+      <div class="mb-3">
+        <label class="text-zinc-400 text-xs mb-1.5 block">New Password</label>
+        <input type="password" id="newPasswordInput" class="input-field" placeholder="Min. 6 characters">
+      </div>
+      <div class="mb-5">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Confirm Password</label>
+        <input type="password" id="confirmPasswordInput" class="input-field" placeholder="Repeat password"
+          onkeypress="if(event.key==='Enter')wallet.setPasswordAndEncrypt()">
+      </div>
+      <button onclick="wallet.setPasswordAndEncrypt()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition mb-3">
+        Set Password & Open Wallet
+      </button>
+      <p class="text-zinc-600 text-xs text-center">Minimum 6 characters required</p>
+    </div>
+  </div>
+
+  <!-- ── UNLOCK ── -->
+  <div id="unlockModal" class="modal-overlay hidden">
+    <div class="modal-box text-center">
+      <div class="relative inline-block mb-5">
+        <div class="absolute inset-0 rounded-full bg-yellow-400/20 blur-xl scale-150"></div>
+        <img src="logo.png" alt="AliTerra"
+          class="relative w-20 h-20 rounded-full object-cover border border-yellow-400/20 shadow-xl">
+      </div>
+      <h3 class="text-xl font-bold mb-1">Welcome Back</h3>
+      <p class="text-zinc-500 text-sm mb-6">Enter your password to unlock</p>
+      <input type="password" id="unlockPasswordInput" class="input-field text-center text-lg tracking-widest mb-5"
+        placeholder="••••••••"
+        onkeypress="if(event.key==='Enter')wallet.unlockWithPassword()">
+      <button onclick="wallet.unlockWithPassword()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition mb-4">
+        Unlock
+      </button>
+      <button onclick="resetWallet()"
+        class="text-zinc-600 text-xs hover:text-yellow-400 transition">
+        Forgot password? Reset wallet
+      </button>
+    </div>
+  </div>
+
+  <!-- ── SEND ── -->
+  <div id="sendModal" class="modal-overlay hidden" onclick="overlayClick(event,'sendModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Send</h3>
+        <button onclick="hideModal('sendModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <div class="mb-4">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Token</label>
+        <select id="sendTokenSelect" class="input-field"></select>
+      </div>
+
+      <div class="mb-4">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Recipient Address</label>
+        <input type="text" id="sendToAddress" class="input-field font-mono text-sm" placeholder="0x...">
+      </div>
+
+      <div class="mb-5">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Amount</label>
+        <input type="number" id="sendAmount" class="input-field text-xl" placeholder="0.0" step="0.0001"
+          onkeypress="if(event.key==='Enter')wallet.sendTransaction()">
+      </div>
+
+      <button id="sendBtn" onclick="wallet.sendTransaction()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition">
+        Send
+      </button>
+    </div>
+  </div>
+
+  <!-- ── LUX EXCHANGE ── -->
+  <div id="luxExchangeModal" class="modal-overlay hidden" onclick="overlayClick(event,'luxExchangeModal')">
+    <div class="modal-box text-center">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold text-yellow-400">LUX Exchange</h3>
+        <button onclick="hideModal('luxExchangeModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <p class="text-zinc-400 text-sm mb-5">Connect to LUX Exchange to swap tokens</p>
+
+      <button onclick="connectToLuxExchange()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition mb-3 flex items-center justify-center gap-2">
+        <img src="logo.png" class="w-5 h-5 rounded-full" alt="">
+        Connect with AliTerra Wallet
+      </button>
+
+      <button onclick="openLuxExchangeSimple()"
+        class="w-full py-3 bg-white/8 hover:bg-white/12 border border-white/15 text-white font-semibold rounded-2xl transition text-sm mb-2">
+        Open without connecting
+      </button>
+
+      <p class="text-zinc-600 text-xs mt-3">luxex.aliterra.space</p>
+    </div>
+  </div>
+
+  <!-- ── QR SCANNER ── -->
+  <div id="qrScannerModal" class="modal-overlay hidden" onclick="overlayClick(event,'qrScannerModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-bold">Scan QR Code</h3>
+        <button onclick="closeQrScanner()" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+      <div id="qrScannerViewport" class="rounded-2xl overflow-hidden mb-4" style="min-height:280px;"></div>
+      <p id="qrScannerStatus" class="text-zinc-500 text-xs text-center">Point camera at a QR code</p>
+      <div id="qrScannerResult" class="hidden mt-4">
+        <div class="glass border border-white/10 rounded-2xl p-3 mb-3">
+          <p class="text-zinc-500 text-xs mb-1">Scanned content</p>
+          <p id="qrScannerResultText" class="font-mono text-xs text-zinc-300 break-all"></p>
+        </div>
+        <div id="qrScannerActions"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── INCOMING PAYMENT REQUEST ── -->
+  <div id="payRequestModal" class="modal-overlay hidden" onclick="overlayClick(event,'payRequestModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-bold text-yellow-400">Payment Request</h3>
+        <button onclick="hideModal('payRequestModal'); clearPaymentParams()" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <div class="glass border border-yellow-400/20 rounded-2xl p-4 mb-4">
+        <p class="text-zinc-500 text-xs mb-1">Recipient</p>
+        <p id="payReqTo" class="font-mono text-xs text-zinc-300 break-all mb-3"></p>
+        <div class="flex gap-4">
+          <div class="flex-1">
+            <p class="text-zinc-500 text-xs mb-1">Amount</p>
+            <p id="payReqAmount" class="text-xl font-bold text-white"></p>
+          </div>
+          <div class="flex-1">
+            <p class="text-zinc-500 text-xs mb-1">Token</p>
+            <p id="payReqToken" class="text-xl font-bold text-yellow-400"></p>
+          </div>
+        </div>
+        <div class="mt-2">
+          <p class="text-zinc-500 text-xs mb-1">Network</p>
+          <p id="payReqNetwork" class="text-sm text-zinc-300"></p>
+        </div>
+      </div>
+
+      <div id="payReqWalletActions" class="hidden">
+        <button id="payReqSendBtn" onclick="executePaymentRequest()"
+          class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition mb-3">
+          Pay Now
+        </button>
+      </div>
+
+      <div id="payReqNoWallet">
+        <p class="text-zinc-400 text-sm text-center mb-4">To make this payment, use AliTerra Wallet:</p>
+        <a href="https://wallet.aliterra.space" target="_blank"
+          class="block w-full py-3 bg-white/8 hover:bg-white/12 border border-white/15 text-white font-semibold rounded-2xl transition text-center text-sm mb-3">
+          Open AliTerra Wallet
+        </a>
+        <a href="https://t.me/aliterra_wallet_bot" target="_blank"
+          class="block w-full py-3 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-400/30 text-blue-400 font-semibold rounded-2xl transition text-center text-sm">
+          Open Telegram Bot
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RECEIVE ── -->
+  <div id="receiveModal" class="modal-overlay hidden" onclick="overlayClick(event,'receiveModal')">
+    <div class="modal-box text-center">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Receive</h3>
+        <button onclick="hideModal('receiveModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <div class="flex mb-4 bg-white/5 rounded-xl p-1">
+        <button id="receiveTabAddress" onclick="switchReceiveTab('address')"
+          class="flex-1 py-2 text-xs font-semibold rounded-lg transition bg-yellow-400/15 text-yellow-400">
+          Address
+        </button>
+        <button id="receiveTabPayment" onclick="switchReceiveTab('payment')"
+          class="flex-1 py-2 text-xs font-semibold rounded-lg transition text-zinc-500 hover:text-zinc-300">
+          Payment Request
+        </button>
+      </div>
+
+      <div id="receiveAddressView">
+        <div id="qrCodeContainer" class="mx-auto mb-5 flex items-center justify-center bg-white rounded-2xl p-3" style="width:196px;height:196px;"></div>
+        <p class="text-zinc-500 text-sm mb-3">Your wallet address</p>
+        <div class="flex items-center gap-2 bg-white/5 rounded-2xl px-4 py-3 border border-white/10 mb-2">
+          <span id="receiveAddress"
+            class="font-mono text-xs text-zinc-300 flex-1 break-all text-left select-all">0x...</span>
+          <button onclick="copyReceiveAddress()"
+            class="text-zinc-500 hover:text-yellow-400 transition shrink-0 text-lg">📋</button>
+        </div>
+        <p class="text-zinc-600 text-xs mt-2">Only send compatible tokens on the correct network</p>
+      </div>
+
+      <div id="receivePaymentView" class="hidden">
+        <div class="text-left mb-4">
+          <label class="text-zinc-400 text-xs mb-1.5 block">Token</label>
+          <select id="paymentRequestToken" onchange="updatePaymentQR()"
+            class="input-field text-sm">
+          </select>
+        </div>
+        <div class="text-left mb-4">
+          <label class="text-zinc-400 text-xs mb-1.5 block">Amount</label>
+          <input type="number" id="paymentRequestAmount" class="input-field text-sm"
+            placeholder="0.00" step="any" min="0" oninput="updatePaymentQR()">
+        </div>
+        <div id="paymentQrContainer" class="mx-auto mb-4 flex items-center justify-center bg-white rounded-2xl p-4" style="width:280px;height:280px;">
+          <p class="text-zinc-400 text-xs">Enter amount to generate QR</p>
+        </div>
+        <div id="paymentQrInfo" class="hidden">
+          <p class="text-zinc-500 text-xs mb-2">Payment request link</p>
+          <div class="flex items-center gap-2 bg-white/5 rounded-2xl px-4 py-3 border border-white/10 mb-2">
+            <span id="paymentRequestUri"
+              class="font-mono text-[10px] text-zinc-400 flex-1 break-all text-left select-all"></span>
+            <button onclick="copyPaymentUri()"
+              class="text-zinc-500 hover:text-yellow-400 transition shrink-0 text-lg">📋</button>
+          </div>
+          <p class="text-zinc-600 text-xs mb-1">Scan to open AliTerra Wallet and pay</p>
+          <p class="text-zinc-700 text-[10px]">No wallet app? Opens the web version automatically</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ADD TOKEN ── -->
+  <div id="addTokenModal" class="modal-overlay hidden" onclick="overlayClick(event,'addTokenModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Add Token</h3>
+        <button onclick="hideModal('addTokenModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <!-- Popular tokens quick-add -->
+      <div id="popularTokensContainer"></div>
+
+      <div class="mb-5">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Or enter contract address</label>
+        <input type="text" id="tokenAddress" class="input-field font-mono text-sm"
+          placeholder="0x..."
+          onkeypress="if(event.key==='Enter')wallet.addToken(document.getElementById('tokenAddress').value)">
+      </div>
+      <button onclick="wallet.addToken(document.getElementById('tokenAddress').value)"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition">
+        Add Token
+      </button>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ── -->
+  <div id="settingsModal" class="modal-overlay hidden" onclick="overlayClick(event,'settingsModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Settings</h3>
+        <button onclick="hideModal('settingsModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+
+      <!-- Network -->
+      <div class="mb-5">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Network</label>
+        <select id="settingsNetwork" onchange="wallet.changeNetwork(parseInt(this.value))"
+          class="input-field">
+          <option value="137">Polygon</option>
+          <option value="1">Ethereum Mainnet</option>
+          <option value="56">BSC</option>
+        </select>
+      </div>
+
+      <div class="h-px bg-white/8 my-4"></div>
+
+      <!-- Private Key -->
+      <div class="mb-4">
+        <div class="flex justify-between items-center mb-2">
+          <label class="text-zinc-400 text-xs">Private Key</label>
+          <button id="pkShowBtn" onclick="exportPrivateKey()"
+            class="text-xs text-yellow-400 hover:text-yellow-300 transition">
+            Show ↓
+          </button>
+        </div>
+        <div id="pkSection" class="hidden">
+          <div class="relative mb-2">
+            <input type="password" id="pkInput" readonly
+              class="input-field pr-16 font-mono text-xs">
+            <button onclick="togglePkVisibility()" id="pkToggleBtn"
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white transition">
+              Show
+            </button>
+          </div>
+          <button onclick="copyPrivateKey()"
+            class="text-xs text-zinc-500 hover:text-yellow-400 transition">
+            📋 Copy Private Key
+          </button>
+        </div>
+      </div>
+
+      <!-- Mnemonic -->
+      <div id="mnemonicSettingsGroup" class="hidden mb-4">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Seed Phrase</label>
+        <input type="text" id="mnemonicInputSettings" readonly
+          class="input-field font-mono text-xs mb-2">
+        <button onclick="copyMnemonicSettings()"
+          class="text-xs text-zinc-500 hover:text-yellow-400 transition">
+          📋 Copy Seed Phrase
+        </button>
+      </div>
+
+      <div class="h-px bg-white/8 my-4"></div>
+
+      <!-- Change Password -->
+      <button onclick="showModal('changePasswordModal')"
+        class="w-full py-3.5 glass border border-white/10 hover:border-white/20 rounded-2xl text-sm transition mb-3">
+        🔒 Change Password
+      </button>
+
+      <!-- Clear data -->
+      <button onclick="clearAllData()"
+        class="w-full py-3.5 bg-red-500/8 hover:bg-red-500/12 border border-red-500/20 text-red-400 rounded-2xl text-sm transition">
+        🗑️ Clear All Wallet Data
+      </button>
+    </div>
+  </div>
+
+  <!-- ── CHANGE PASSWORD ── -->
+  <div id="changePasswordModal" class="modal-overlay hidden" onclick="overlayClick(event,'changePasswordModal')">
+    <div class="modal-box">
+      <div class="flex justify-between items-center mb-5">
+        <h3 class="text-lg font-bold">Change Password</h3>
+        <button onclick="hideModal('changePasswordModal')" class="text-zinc-500 hover:text-white text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition">&times;</button>
+      </div>
+      <div class="mb-3">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Current Password</label>
+        <input type="password" id="currentPasswordInput" class="input-field" placeholder="••••••••">
+      </div>
+      <div class="mb-3">
+        <label class="text-zinc-400 text-xs mb-1.5 block">New Password</label>
+        <input type="password" id="newPasswordChangeInput" class="input-field" placeholder="••••••••">
+      </div>
+      <div class="mb-5">
+        <label class="text-zinc-400 text-xs mb-1.5 block">Confirm New Password</label>
+        <input type="password" id="confirmPasswordChangeInput" class="input-field" placeholder="••••••••"
+          onkeypress="if(event.key==='Enter')wallet.changePasswordWithUI()">
+      </div>
+      <button onclick="wallet.changePasswordWithUI()"
+        class="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition">
+        Change Password
+      </button>
+    </div>
+  </div>
+
+
+  <script>
+  // ================================================================
+  //  NETWORKS & TOKENS CONFIG
+  // ================================================================
+  const NETWORKS = {
+    1: {
+      name: "Ethereum", currency: "ETH", chainId: 1,
+      rpc: "https://eth.llamarpc.com",
+      blockExplorer: "https://etherscan.io",
+      apiUrl: "https://api.etherscan.io/api"
+    },
+    137: {
+      name: "Polygon", currency: "POL", chainId: 137,
+      rpc: "https://polygon-bor-rpc.publicnode.com",
+      blockExplorer: "https://polygonscan.com",
+      apiUrl: "https://api.polygonscan.com/api",
+      apiKey: "9V8JSP7A4ZMWG5FWBMP9GKPHR31VI13FSU"
+    },
+    56: {
+      name: "BSC", currency: "BNB", chainId: 56,
+      rpc: "https://bsc-dataseed.binance.org",
+      blockExplorer: "https://bscscan.com",
+      apiUrl: "https://api.bscscan.com/api"
+    },
+  };
+
+  // ================================================================
+  //  POPULAR TOKENS PER NETWORK
+  // ================================================================
+  const POPULAR_TOKENS = {
+    137: [
+      { name: "LUX", address: "0x7324c346b47250a3e147a3c43b7a1545d0dc0796", highlight: true },
+      { name: "POL", address: "0x0000000000000000000000000000000000001010" },
+      { name: "USDC", address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174" },
+      { name: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F" },
+      { name: "WETH", address: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619" },
+      { name: "WBTC", address: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6" },
+      { name: "UNI", address: "0xb33EaAd8d922B1083446DC23f610c2567fB5180f" },
+      { name: "LINK", address: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39" },
+      { name: "SAND", address: "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683" },
+      { name: "AAVE", address: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B" },
+      { name: "WPOL", address: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270" },
+      { name: "DAI", address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063" },
+      { name: "CRV", address: "0x172370d5Cd63279eFa6d502DAB29171933a610AF" },
+      { name: "SUSHI", address: "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a" },
+      { name: "GRT", address: "0x5fe2B58c013d7601147DcdD68C143A77499f5531" }
+    ],
+    1: [
+      { name: "LUX", address: "0x7324c346b47250a3e147a3c43b7a1545d0dc0796", highlight: true },
+      { name: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
+      { name: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7" },
+      { name: "WETH", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" },
+      { name: "WBTC", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599" },
+      { name: "DAI", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F" },
+      { name: "UNI", address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" },
+      { name: "LINK", address: "0x514910771AF9Ca656af840dff83E8264EcF986CA" },
+      { name: "AAVE", address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9" }
+    ],
+    56: [
+      { name: "USDT", address: "0x55d398326f99059fF775485246999027B3197955" },
+      { name: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" },
+      { name: "BUSD", address: "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56" },
+      { name: "WBNB", address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c" },
+      { name: "ETH", address: "0x2170Ed0880ac9A755fd29B2688956BD959F933F8" },
+      { name: "CAKE", address: "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82" }
+    ]
+  };
+
+  function renderPopularTokens() {
+    const container = document.getElementById("popularTokensContainer");
+    if (!container) return;
+
+    const tokens = POPULAR_TOKENS[wallet.networkId] || [];
+    if (tokens.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const netName = NETWORKS[wallet.networkId]?.name || "Network";
+    const alreadyAdded = Object.values(wallet.tokens || {}).map(t => t.address?.toLowerCase());
+
+    let html = `<p class="text-zinc-500 text-xs mb-2">Popular on ${netName}</p><div class="flex flex-wrap gap-2 mb-5">`;
+    for (const t of tokens) {
+      const isAdded = alreadyAdded.includes(t.address.toLowerCase());
+      if (t.highlight) {
+        html += `<button onclick="wallet.addToken('${t.address}')" ${isAdded ? 'disabled' : ''}
+          class="px-3 py-2 ${isAdded ? 'opacity-40 cursor-not-allowed' : ''} bg-yellow-400/12 border border-yellow-400/30 text-yellow-400 hover:bg-yellow-400/20 rounded-xl text-xs transition font-semibold">
+          ${isAdded ? '&#10003; ' : '&#10022; '}${t.name}
+        </button>`;
+      } else {
+        html += `<button onclick="wallet.addToken('${t.address}')" ${isAdded ? 'disabled' : ''}
+          class="px-3 py-2 ${isAdded ? 'opacity-40 cursor-not-allowed' : ''} glass border border-white/10 hover:border-white/20 rounded-xl text-xs transition">
+          ${isAdded ? '&#10003; ' : ''}${t.name}
+        </button>`;
+      }
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  // ================================================================
+  //  UI HELPERS
+  // ================================================================
+  function showScreen(name) {
+    ["setup","dashboard"].forEach(s => {
+      const el = document.getElementById("screen-" + s);
+      if (el) el.classList.add("hidden");
+    });
+    const target = document.getElementById("screen-" + name);
+    if (target) target.classList.remove("hidden");
+  }
+
+  function showModal(id) {
+    closeAllModals();
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("hidden");
+  }
+
+  function hideModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  }
+
+  function closeAllModals() {
+    document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
+  }
+
+  function overlayClick(e, id) {
+    if (e.target === document.getElementById(id)) hideModal(id);
+  }
+
+  function showToast(message, type = "info") {
+    const container = document.getElementById("toastContainer");
+    const toast = document.createElement("div");
+    toast.className = "toast toast-" + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
+  }
+
+  function switchTab(tab) {
+    ["tokens","activity"].forEach(t => {
+      document.getElementById("tab-content-" + t)?.classList.add("hidden");
+      const btn = document.getElementById("tab-" + t);
+      if (btn) {
+        btn.classList.remove("active");
+      }
+    });
+    document.getElementById("tab-content-" + tab)?.classList.remove("hidden");
+    const activeBtn = document.getElementById("tab-" + tab);
+    if (activeBtn) activeBtn.classList.add("active");
+    if (tab === "activity" && wallet.address) {
+      wallet.fetchBlockchainTransactions();
+    }
+  }
+
+  function toggleMenu() {
+    document.getElementById("dropdownMenu")?.classList.toggle("hidden");
+  }
+
+  document.addEventListener("click", e => {
+    const wrapper = document.getElementById("menuWrapper");
+    if (wrapper && !wrapper.contains(e.target)) {
+      document.getElementById("dropdownMenu")?.classList.add("hidden");
+    }
+  });
+
+  function onNetworkSelectChange(value) {
+    wallet.networkId = parseInt(value);
+    wallet.provider  = new ethers.JsonRpcProvider(NETWORKS[wallet.networkId].rpc);
+  }
+
+  // ─── Render ───
+  function updateAddressDisplay(address) {
+    const short = address ? `${address.slice(0,6)}...${address.slice(-4)}` : "0x...";
+    const el = document.getElementById("addressDisplay");
+    if (el) el.textContent = short;
+  }
+
+  function updateBalance(balance, currency) {
+    const bv = document.getElementById("balanceValue");
+    const bc = document.getElementById("balanceCurrency");
+    if (bv) bv.textContent = parseFloat(balance).toFixed(4);
+    if (bc) bc.textContent = currency;
+  }
+
+  function updateNetworkBadge(name) {
+    const el = document.getElementById("networkBadge");
+    if (el) el.textContent = name;
+  }
+
+  function renderTokens(tokens) {
+    const container = document.getElementById("tokensList");
+    if (!container) return;
+
+    if (!tokens || typeof tokens !== "object" || Object.keys(tokens).length === 0) {
+      container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-6">No tokens added yet</p>';
+      return;
+    }
+
+    container.innerHTML = "";
+    for (const [symbol, data] of Object.entries(tokens)) {
+      if (!data || typeof data !== "object") continue;
+      const isLux = symbol === "LUX";
+      const bal = data.balance != null ? parseFloat(data.balance) : 0;
+      const displayBal = isNaN(bal) ? "0.000000" : bal.toFixed(6);
+      const div = document.createElement("div");
+      div.className = "token-item";
+      div.innerHTML = `
+        <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0
+          ${isLux ? "bg-yellow-400 text-zinc-900" : "bg-white/10 text-white"}">
+          ${symbol.charAt(0)}
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm">${symbol}</p>
+          <p class="text-zinc-500 text-xs font-mono mt-0.5">${displayBal}</p>
+        </div>
+        <button onclick="prepareSendToken('${symbol}')"
+          class="px-3 py-1.5 glass border border-white/10 hover:border-yellow-400/30
+                 hover:text-yellow-400 rounded-xl text-xs transition shrink-0">
+          Send
+        </button>
+      `;
+      container.appendChild(div);
+    }
+
+    if (container.children.length === 0) {
+      container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-6">No tokens added yet</p>';
+    }
+  }
+
+  function formatTxDate(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return diffMin + "m ago";
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return diffH + "h ago";
+    const diffD = Math.floor(diffH / 24);
+    if (diffD < 7) return diffD + "d ago";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  function renderTransactions(transactions) {
+    const container = document.getElementById("transactionsList");
+    if (!container) return;
+
+    if (!transactions || !Array.isArray(transactions) || transactions.length === 0) {
+      container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-6">No transactions yet</p>';
+      return;
+    }
+
+    container.innerHTML = "";
+    transactions.slice(0, 30).forEach(tx => {
+      if (!tx || typeof tx !== "object") return;
+      const isSend = tx.type === "send";
+      const target = isSend ? (tx.to || "—") : (tx.from || "Network");
+      const shortT = target.length > 10
+        ? `${target.slice(0,6)}…${target.slice(-4)}` : target;
+      const amt = parseFloat(tx.amount || 0);
+      const displayAmt = isNaN(amt) ? "0.00000" : amt.toFixed(5);
+      const dateStr = formatTxDate(tx.timestamp);
+      const explorerUrl = tx.hash ? (NETWORKS[wallet.networkId]?.blockExplorer + "/tx/" + tx.hash) : "";
+
+      const div = document.createElement("div");
+      div.className = "tx-item" + (explorerUrl ? " cursor-pointer hover:bg-white/3 rounded-xl -mx-2 px-2 transition" : "");
+      if (explorerUrl) div.onclick = () => window.open(explorerUrl, "_blank");
+      div.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-base shrink-0
+            ${isSend ? "bg-red-500/12 text-red-400" : "bg-emerald-500/12 text-emerald-400"}">
+            ${isSend ? "↑" : "↓"}
+          </div>
+          <div>
+            <p class="text-sm font-medium ${isSend ? "text-red-400" : "text-emerald-400"}">
+              ${isSend ? "Sent" : "Received"}
+            </p>
+            <p class="text-zinc-600 text-xs font-mono">${shortT}</p>
+            ${dateStr ? '<p class="text-zinc-700 text-[10px] mt-0.5">' + dateStr + '</p>' : ''}
+          </div>
+        </div>
+        <div class="text-right">
+          <p class="text-sm font-semibold">${displayAmt}</p>
+          <p class="text-zinc-600 text-xs">${tx.token || NETWORKS[wallet.networkId]?.currency || ""}</p>
+        </div>
+      `;
+      container.appendChild(div);
+    });
+
+    if (container.children.length === 0) {
+      container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-6">No transactions yet</p>';
+    }
+  }
+
+  // ─── Modal actions ───
+  function showSendModal() {
+    const select = document.getElementById("sendTokenSelect");
+    if (select) {
+      select.innerHTML = `<option value="">Native (${NETWORKS[wallet.networkId]?.currency || "ETH"})</option>`;
+      for (const sym of Object.keys(wallet.tokens)) {
+        const opt = document.createElement("option");
+        opt.value = sym; opt.textContent = sym;
+        select.appendChild(opt);
+      }
+    }
+    showModal("sendModal");
+  }
+
+  function switchReceiveTab(tab) {
+    const addrView = document.getElementById("receiveAddressView");
+    const payView = document.getElementById("receivePaymentView");
+    const tabAddr = document.getElementById("receiveTabAddress");
+    const tabPay = document.getElementById("receiveTabPayment");
+    if (tab === "address") {
+      addrView?.classList.remove("hidden");
+      payView?.classList.add("hidden");
+      tabAddr.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition bg-yellow-400/15 text-yellow-400";
+      tabPay.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition text-zinc-500 hover:text-zinc-300";
+    } else {
+      addrView?.classList.add("hidden");
+      payView?.classList.remove("hidden");
+      tabPay.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition bg-yellow-400/15 text-yellow-400";
+      tabAddr.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition text-zinc-500 hover:text-zinc-300";
+      populatePaymentTokenSelect();
+    }
+  }
+
+  function populatePaymentTokenSelect() {
+    const select = document.getElementById("paymentRequestToken");
+    if (!select) return;
+    const net = NETWORKS[wallet.networkId];
+    select.innerHTML = `<option value="">Native (${net?.currency || "ETH"})</option>`;
+    for (const sym of Object.keys(wallet.tokens || {})) {
+      const opt = document.createElement("option");
+      opt.value = sym;
+      opt.textContent = sym;
+      select.appendChild(opt);
+    }
+  }
+
+  const WALLET_SITE_URL = "https://wallet.aliterra.space";
+  const TELEGRAM_BOT = "https://t.me/aliterra_wallet_bot";
+
+  function buildPaymentUri() {
+    const addr = wallet.address;
+    if (!addr) return null;
+    const tokenSym = document.getElementById("paymentRequestToken")?.value || "";
+    const amount = document.getElementById("paymentRequestAmount")?.value || "";
+    if (!amount || parseFloat(amount) <= 0) return null;
+
+    const chainId = wallet.networkId;
+    // Use compact param names to keep QR small & scannable: a=amount, c=chain,
+    // s=token symbol, k=contract, d=decimals. Long names still accepted on read.
+    const params = new URLSearchParams();
+    params.set("to", addr);
+    params.set("a", amount);
+    params.set("c", chainId.toString());
+    if (tokenSym && wallet.tokens[tokenSym]) {
+      params.set("s", tokenSym);
+      params.set("k", wallet.tokens[tokenSym].address);
+      const dec = wallet.tokens[tokenSym].decimals || 18;
+      if (dec !== 18) params.set("d", dec.toString());
+    }
+    return `${WALLET_SITE_URL}?pay=1&${params.toString()}`;
+  }
+
+  let paymentQrDebounce = null;
+  function updatePaymentQR() {
+    clearTimeout(paymentQrDebounce);
+    paymentQrDebounce = setTimeout(() => {
+      const container = document.getElementById("paymentQrContainer");
+      const infoBlock = document.getElementById("paymentQrInfo");
+      const uriSpan = document.getElementById("paymentRequestUri");
+      if (!container) return;
+
+      const uri = buildPaymentUri();
+      if (!uri) {
+        container.innerHTML = '<p class="text-zinc-400 text-xs">Enter amount to generate QR</p>';
+        infoBlock?.classList.add("hidden");
+        return;
+      }
+
+      container.innerHTML = "";
+      try {
+        new QRCode(container, {
+          text: uri,
+          width: 256,
+          height: 256,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.H
+        });
+        const img = container.querySelector("img, canvas");
+        if (img) { img.style.width = "100%"; img.style.height = "100%"; img.style.imageRendering = "pixelated"; }
+      } catch(e) {
+        container.innerHTML = '<span class="text-xs text-red-400 p-2">QR generation failed</span>';
+      }
+
+      if (uriSpan) uriSpan.textContent = uri;
+      infoBlock?.classList.remove("hidden");
+    }, 300);
+  }
+
+  function copyPaymentUri() {
+    const uri = document.getElementById("paymentRequestUri")?.textContent || "";
+    if (uri) {
+      navigator.clipboard.writeText(uri).then(() => {
+        showToast("Payment link copied", "success");
+      }).catch(() => {
+        showToast("Copy failed", "error");
+      });
+    }
+  }
+
+  function showReceiveModal() {
+    const addr = wallet.address || "0x...";
+    const ra   = document.getElementById("receiveAddress");
+    if (ra) ra.textContent = addr;
+
+    const qrContainer = document.getElementById("qrCodeContainer");
+    if (qrContainer) {
+      qrContainer.innerHTML = "";
+      try {
+        new QRCode(qrContainer, {
+          text: addr,
+          width: 170,
+          height: 170,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.H
+        });
+      } catch(e) {
+        qrContainer.innerHTML = '<span class="text-xs text-gray-500 break-all p-2">' + addr + '</span>';
+      }
+    }
+
+    switchReceiveTab("address");
+    showModal("receiveModal");
+  }
+
+  let html5QrScanner = null;
+
+  function openQrScanner() {
+    const resultDiv = document.getElementById("qrScannerResult");
+    const statusEl = document.getElementById("qrScannerStatus");
+    if (resultDiv) resultDiv.classList.add("hidden");
+    if (statusEl) statusEl.textContent = "Starting camera...";
+
+    showModal("qrScannerModal");
+
+    setTimeout(() => {
+      try {
+        html5QrScanner = new Html5Qrcode("qrScannerViewport");
+        html5QrScanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText) => {
+            handleScannedQR(decodedText);
+          },
+          () => {}
+        ).then(() => {
+          if (statusEl) statusEl.textContent = "Point camera at a QR code";
+        }).catch(err => {
+          if (statusEl) statusEl.textContent = "Camera error: " + (err?.message || err).toString().slice(0, 80);
+        });
+      } catch(e) {
+        if (statusEl) statusEl.textContent = "Camera not available";
+      }
+    }, 300);
+  }
+
+  function closeQrScanner() {
+    const scanner = html5QrScanner;
+    html5QrScanner = null;
+    if (scanner) {
+      try {
+        const p = scanner.stop();
+        if (p && typeof p.then === "function") {
+          p.then(() => { try { scanner.clear(); } catch(e) {} })
+           .catch(() => { try { scanner.clear(); } catch(e) {} });
+        } else {
+          try { scanner.clear(); } catch(e) {}
+        }
+      } catch(e) {
+        try { scanner.clear(); } catch(e2) {}
+      }
+    }
+    hideModal("qrScannerModal");
+  }
+
+  let lastScannedQR = null;
+
+  function handleScannedQR(text) {
+    if (html5QrScanner) {
+      html5QrScanner.stop().catch(() => {});
+    }
+
+    lastScannedQR = text;
+
+    const statusEl = document.getElementById("qrScannerStatus");
+    if (statusEl) statusEl.textContent = "QR code detected!";
+
+    const resultDiv = document.getElementById("qrScannerResult");
+    const resultText = document.getElementById("qrScannerResultText");
+    const actionsDiv = document.getElementById("qrScannerActions");
+    if (resultText) resultText.textContent = text;
+    if (resultDiv) resultDiv.classList.remove("hidden");
+    if (!actionsDiv) return;
+
+    actionsDiv.innerHTML = "";
+
+    const makeBtn = (label, handler) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.className = "w-full py-3 bg-yellow-400 hover:bg-yellow-300 text-zinc-900 font-bold rounded-2xl transition mb-2";
+      let triggered = false;
+      const fire = (e) => {
+        if (triggered) return;
+        triggered = true;
+        if (e) { try { e.preventDefault(); } catch(_) {} }
+        try { closeQrScanner(); } catch(_) { hideModal("qrScannerModal"); }
+        setTimeout(() => {
+          try { handler(); } catch(err) { showToast("Action failed: " + (err?.message || err), "error"); }
+        }, 80);
+      };
+      b.addEventListener("click", fire);
+      b.addEventListener("touchend", fire);
+      b.style.touchAction = "manipulation";
+      b.style.cursor = "pointer";
+      actionsDiv.appendChild(b);
+    };
+
+    let matched = false;
+
+    // 1) AliTerra payment URL
+    if (text.includes("wallet.aliterra.space") && text.includes("pay=1")) {
+      try {
+        new URL(text);
+        makeBtn("Open Payment Request", () => processScannedPayment(text));
+        matched = true;
+      } catch(e) {}
+    }
+
+    // 2) Plain Ethereum address
+    if (!matched && typeof ethers !== "undefined" && ethers.isAddress && ethers.isAddress(text)) {
+      makeBtn("Send to this address", () => prefillSendAddress(text));
+      matched = true;
+    }
+
+    // 3) EIP-681 ethereum: URI
+    if (!matched && text.startsWith("ethereum:")) {
+      makeBtn("Process Payment", () => processEIP681(text));
+      matched = true;
+    }
+
+    // 4) Generic URL fallback — try as payment link anyway if it has pay=1
+    if (!matched) {
+      try {
+        const u = new URL(text);
+        if (u.searchParams.get("pay") === "1" && u.searchParams.get("to")) {
+          makeBtn("Open Payment Request", () => processScannedPayment(text));
+          matched = true;
+        }
+      } catch(e) {}
+    }
+
+    if (!matched) {
+      const info = document.createElement("p");
+      info.className = "text-zinc-400 text-xs text-center mb-2";
+      info.textContent = "Unrecognised QR format";
+      actionsDiv.appendChild(info);
+    }
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Close";
+    closeBtn.className = "w-full py-3 bg-white/8 hover:bg-white/12 border border-white/15 text-white font-semibold rounded-2xl transition text-sm";
+    closeBtn.addEventListener("click", closeQrScanner);
+    actionsDiv.appendChild(closeBtn);
+  }
+
+  function openPaymentRequestFromParams(params) {
+    pendingPayment = null;
+    // Accept both compact (a/c/s/k/d) and legacy (amount/chain/token/contract/decimals) names.
+    const pick = (...keys) => { for (const k of keys) { const v = params.get(k); if (v != null && v !== "") return v; } return null; };
+    const to       = pick("to");
+    const amount   = pick("a", "amount");
+    const chain    = parseInt(pick("c", "chain") || "137");
+    const token    = pick("s", "token") || "";
+    const contract = pick("k", "contract") || "";
+    const decimals = parseInt(pick("d", "decimals") || "18");
+
+    if (!to || !amount) {
+      showToast("Payment link missing recipient or amount", "error");
+      return;
+    }
+
+    pendingPayment = { to, amount, chain, token, contract, decimals };
+
+    const netName  = NETWORKS[chain]?.name || `Chain ${chain}`;
+    const currency = token || NETWORKS[chain]?.currency || "ETH";
+
+    const elTo  = document.getElementById("payReqTo");
+    const elAmt = document.getElementById("payReqAmount");
+    const elTok = document.getElementById("payReqToken");
+    const elNet = document.getElementById("payReqNetwork");
+    if (elTo)  elTo.textContent  = to;
+    if (elAmt) elAmt.textContent = amount;
+    if (elTok) elTok.textContent = currency;
+    if (elNet) elNet.textContent = netName;
+
+    if (wallet.address && wallet.signer) {
+      showPayReqForLoggedIn();
+    } else {
+      document.getElementById("payReqWalletActions")?.classList.add("hidden");
+      document.getElementById("payReqNoWallet")?.classList.remove("hidden");
+    }
+
+    showModal("payRequestModal");
+  }
+
+  function processScannedPayment(urlStr) {
+    try {
+      const url = new URL(urlStr);
+      openPaymentRequestFromParams(url.searchParams);
+    } catch(e) {
+      showToast("Invalid payment link", "error");
+    }
+  }
+
+  function prefillSendAddress(addr) {
+    showSendModal();
+    setTimeout(() => {
+      const input = document.getElementById("sendToAddress");
+      if (input) {
+        input.value = addr;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }, 50);
+  }
+
+  function processEIP681(uri) {
+    try {
+      // ethereum:<address>[@chainId][/function][?param=value&...]
+      const m = uri.match(/^ethereum:(0x[a-fA-F0-9]{40})(@(\d+))?(\/(\w+))?(\?(.*))?$/);
+      if (!m) {
+        showToast("Unsupported EIP-681 format", "error");
+        return;
+      }
+      const target  = m[1];
+      const chainId = m[3] ? parseInt(m[3]) : null;
+      const fn      = m[5] || null;
+      const qs      = m[7] ? new URLSearchParams(m[7]) : new URLSearchParams();
+
+      // ERC-20 transfer: ethereum:<token>@<chain>/transfer?address=<to>&uint256=<amt>
+      if (fn === "transfer") {
+        const to  = qs.get("address");
+        const amt = qs.get("uint256") || qs.get("value");
+        if (!to || !amt) {
+          showToast("Invalid transfer link", "error");
+          return;
+        }
+        const tokenInfo = Object.entries(wallet.tokens || {}).find(
+          ([sym, t]) => t.address && t.address.toLowerCase() === target.toLowerCase()
+        );
+        const decimals = tokenInfo ? (tokenInfo[1].decimals || 18) : 18;
+        const symbol   = tokenInfo ? tokenInfo[0] : "";
+        const human    = (Number(amt) / Math.pow(10, decimals)).toString();
+
+        const params = new URLSearchParams();
+        params.set("to", to);
+        params.set("amount", human);
+        params.set("chain", String(chainId || wallet.networkId || 137));
+        if (symbol)  params.set("token", symbol);
+        params.set("contract", target);
+        params.set("decimals", String(decimals));
+        openPaymentRequestFromParams(params);
+        return;
+      }
+
+      // Native send: ethereum:<to>[@chain]?value=<wei>
+      const valueWei = qs.get("value");
+      if (valueWei) {
+        const human = (BigInt(valueWei) / 10n ** 14n).toString();
+        const eth   = (Number(human) / 10000).toString();
+        const params = new URLSearchParams();
+        params.set("to", target);
+        params.set("amount", eth);
+        params.set("chain", String(chainId || wallet.networkId || 137));
+        openPaymentRequestFromParams(params);
+        return;
+      }
+
+      // Address only — fall back to Send form
+      prefillSendAddress(target);
+    } catch(e) {
+      showToast("Failed to parse payment link", "error");
+    }
+  }
+
+  function showSwapInfo() {
+    showToast("Swap coming soon — try LUX Exchange at luxex.aliterra.space", "info");
+  }
+
+  function openLuxExchange() {
+    showModal("luxExchangeModal");
+  }
+
+  function connectToLuxExchange() {
+    if (!wallet.address) {
+      showToast("Unlock your wallet first", "error");
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("wallet", "aliterra");
+    params.set("address", wallet.address);
+    params.set("chain", wallet.networkId.toString());
+    window.open(`https://luxex.aliterra.space?${params.toString()}`, "_blank");
+    hideModal("luxExchangeModal");
+  }
+
+  function openLuxExchangeSimple() {
+    window.open("https://luxex.aliterra.space", "_blank");
+    hideModal("luxExchangeModal");
+  }
+
+  function copyAddress() {
+    if (wallet.address) {
+      navigator.clipboard.writeText(wallet.address)
+        .then(() => showToast("Address copied!", "success"));
+    }
+  }
+
+  function copyReceiveAddress() {
+    if (wallet.address) {
+      navigator.clipboard.writeText(wallet.address)
+        .then(() => showToast("Address copied!", "success"));
+    }
+  }
+
+  function prepareSendToken(symbol) {
+    showSendModal();
+    const sel = document.getElementById("sendTokenSelect");
+    if (sel) {
+      const idx = Array.from(sel.options).findIndex(o => o.value === symbol);
+      if (idx >= 0) sel.selectedIndex = idx;
+    }
+  }
+
+  function showSettingsModal() {
+    document.getElementById("dropdownMenu")?.classList.add("hidden");
+    const sn = document.getElementById("settingsNetwork");
+    if (sn) sn.value = wallet.networkId;
+    document.getElementById("pkSection")?.classList.add("hidden");
+    document.getElementById("pkShowBtn")?.classList.remove("hidden");
+    document.getElementById("mnemonicSettingsGroup")?.classList.add("hidden");
+    showModal("settingsModal");
+  }
+
+  function exportPrivateKey() {
+    let data = wallet.walletData;
+    if (!data) {
+      const s = localStorage.getItem("wallet");
+      if (s) try { data = JSON.parse(s); } catch(e) {}
+    }
+    if (data?.privateKey) {
+      const pkInput = document.getElementById("pkInput");
+      if (pkInput) pkInput.value = data.privateKey;
+      document.getElementById("pkSection")?.classList.remove("hidden");
+      document.getElementById("pkShowBtn")?.classList.add("hidden");
+
+      const mnemonic = data.mnemonic || data.mnemonicPhrase;
+      if (mnemonic) {
+        const mi = document.getElementById("mnemonicInputSettings");
+        if (mi) mi.value = mnemonic;
+        document.getElementById("mnemonicSettingsGroup")?.classList.remove("hidden");
+      }
+    } else {
+      showToast("Private key not available", "error");
+    }
+  }
+
+  function togglePkVisibility() {
+    const input = document.getElementById("pkInput");
+    const btn   = document.getElementById("pkToggleBtn");
+    if (!input || !btn) return;
+    if (input.type === "password") { input.type = "text";     btn.textContent = "Hide"; }
+    else                           { input.type = "password"; btn.textContent = "Show"; }
+  }
+
+  function copyPrivateKey() {
+    const v = document.getElementById("pkInput")?.value;
+    if (v) navigator.clipboard.writeText(v).then(() => showToast("Private key copied!", "success"));
+  }
+
+  function copyMnemonicSettings() {
+    const v = document.getElementById("mnemonicInputSettings")?.value;
+    if (v) navigator.clipboard.writeText(v).then(() => showToast("Seed phrase copied!", "success"));
+  }
+
+  function clearAllData() {
+    if (!confirm("Delete ALL wallet data? This cannot be undone. Make sure you have your private key/seed phrase!"))
+      return;
+    localStorage.clear();
+    wallet.lock();
+    closeAllModals();
+    showToast("All data cleared", "success");
+    showScreen("setup");
+  }
+
+  function resetWallet() {
+    if (!confirm("Reset wallet? You will lose access unless you have your private key or seed phrase."))
+      return;
+    clearAllData();
+  }
+
+  // ================================================================
+  //  WALLET CLASS
+  // ================================================================
+  class AliTerraWallet {
+    constructor() {
+      this.provider  = null;
+      this.signer    = null;
+      this.address   = null;
+      this.networkId = 137;
+      this.balance   = "0";
+      this.tokens    = {};
+      this.transactions = [];
+      this.walletData   = null;
+      this.locked       = true;
+      this.blockPollingInterval = null;
+    }
+
+    // ─── AES-GCM encryption ───
+    async _deriveKey(password, salt) {
+      const enc = new TextEncoder();
+      const km  = await crypto.subtle.importKey(
+        "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+      );
+      return crypto.subtle.deriveKey(
+        { name:"PBKDF2", salt, iterations:100000, hash:"SHA-256" },
+        km, { name:"AES-GCM", length:256 }, false, ["encrypt","decrypt"]
+      );
+    }
+
+    async _encrypt(data, password) {
+      const enc  = new TextEncoder();
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv   = crypto.getRandomValues(new Uint8Array(12));
+      const key  = await this._deriveKey(password, salt);
+      const ct   = await crypto.subtle.encrypt(
+        { name:"AES-GCM", iv }, key, enc.encode(JSON.stringify(data))
+      );
+      const b64  = arr => btoa(String.fromCharCode(...new Uint8Array(arr)));
+      return { ciphertext: b64(ct), iv: b64(iv), salt: b64(salt) };
+    }
+
+    async _decrypt(enc, password) {
+      const from64 = s => new Uint8Array(atob(s).split("").map(c => c.charCodeAt(0)));
+      const key = await this._deriveKey(password, from64(enc.salt));
+      try {
+        const pt = await crypto.subtle.decrypt(
+          { name:"AES-GCM", iv: from64(enc.iv) }, key, from64(enc.ciphertext)
+        );
+        return JSON.parse(new TextDecoder().decode(pt));
+      } catch { throw new Error("Invalid password"); }
+    }
+
+    async _saveEncrypted(password) {
+      if (!this.walletData) throw new Error("No wallet data");
+      const enc = await this._encrypt(this.walletData, password);
+      localStorage.setItem("encryptedWallet", JSON.stringify(enc));
+    }
+
+    _loadEncrypted() {
+      const s = localStorage.getItem("encryptedWallet");
+      return s ? JSON.parse(s) : null;
+    }
+
+    // ─── Lock / Unlock ───
+    lock() {
+      this.walletData = null;
+      this.signer     = null;
+      this.address    = null;
+      this.tokens     = {};
+      this.transactions = [];
+      this.locked     = true;
+      if (this.blockPollingInterval) {
+        clearInterval(this.blockPollingInterval);
+        this.blockPollingInterval = null;
+      }
+    }
+
+    async unlock(password) {
+      const enc = this._loadEncrypted();
+      if (!enc) throw new Error("No encrypted wallet");
+      const data = await this._decrypt(enc, password);
+      this.walletData = data;
+      this.locked     = false;
+      this.address    = data.address;
+      this.networkId  = data.networkId || 137;
+      this.tokens     = data.tokens || {};
+      this.transactions = data.transactions || [];
+      this.provider   = new ethers.JsonRpcProvider(NETWORKS[this.networkId].rpc);
+      this.signer     = new ethers.Wallet(data.privateKey, this.provider);
+    }
+
+    // ─── Password UI ───
+    async setPasswordAndEncrypt() {
+      const p1 = document.getElementById("newPasswordInput")?.value || "";
+      const p2 = document.getElementById("confirmPasswordInput")?.value || "";
+      if (!p1 || !p2)    return showToast("Fill both fields", "error");
+      if (p1 !== p2)     return showToast("Passwords do not match", "error");
+      if (p1.length < 6) return showToast("Min 6 characters", "error");
+      try {
+        await this._saveEncrypted(p1);
+        localStorage.removeItem("wallet");
+        closeAllModals();
+        showToast("Wallet protected ✓", "success");
+        this.locked = false;
+        showScreen("dashboard");
+        this._afterUnlock();
+      } catch(e) { showToast("Encryption failed: " + e.message, "error"); }
+    }
+
+    async unlockWithPassword() {
+      const pwd = document.getElementById("unlockPasswordInput")?.value || "";
+      if (!pwd) return showToast("Enter password", "error");
+      try {
+        await this.unlock(pwd);
+        closeAllModals();
+        showToast("Wallet unlocked ✓", "success");
+        showScreen("dashboard");
+        this._afterUnlock();
+      } catch(e) { showToast("Wrong password", "error"); }
+    }
+
+    async changePasswordWithUI() {
+      const oldPwd  = document.getElementById("currentPasswordInput")?.value || "";
+      const newPwd  = document.getElementById("newPasswordChangeInput")?.value || "";
+      const confPwd = document.getElementById("confirmPasswordChangeInput")?.value || "";
+      if (!oldPwd || !newPwd)    return showToast("Fill all fields", "error");
+      if (newPwd !== confPwd)    return showToast("Passwords do not match", "error");
+      if (newPwd.length < 6)     return showToast("Min 6 characters", "error");
+      try {
+        const enc = this._loadEncrypted();
+        if (enc) await this._decrypt(enc, oldPwd); // verify old
+        await this._saveEncrypted(newPwd);
+        closeAllModals();
+        showToast("Password changed ✓", "success");
+      } catch(e) { showToast("Failed: " + e.message, "error"); }
+    }
+
+    _afterUnlock() {
+      updateAddressDisplay(this.address);
+      updateNetworkBadge(NETWORKS[this.networkId]?.name || "Unknown");
+      this.updateBalance();
+      this.loadTokens();
+      this.loadTransactions();
+      this._startBlockListener();
+      if (pendingPayment) {
+        showPayReqForLoggedIn();
+        showModal("payRequestModal");
+      }
+      _notifyWeb3Gram(this.address);
+    }
+
+    // ─── Init ───
+    async init() {
+      const netId = 137;
+      try {
+        this.networkId = netId;
+        this.provider  = new ethers.JsonRpcProvider(NETWORKS[netId].rpc);
+
+        // Encrypted wallet → ask password
+        const encrypted = this._loadEncrypted();
+        if (encrypted) {
+          this.locked = true;
+          showModal("unlockModal");
+          return;
+        }
+
+        // Legacy plain wallet (migration)
+        const old = localStorage.getItem("wallet");
+        if (old) {
+          try {
+            const data = JSON.parse(old);
+            if (data?.privateKey) {
+              this.walletData   = data;
+              this.locked       = false;
+              this.address      = data.address;
+              this.networkId    = data.networkId || 137;
+              this.tokens       = data.tokens || {};
+              this.transactions = data.transactions || [];
+              this.provider     = new ethers.JsonRpcProvider(NETWORKS[this.networkId].rpc);
+              this.signer       = new ethers.Wallet(data.privateKey, this.provider);
+              showScreen("dashboard");
+              this._afterUnlock();
+              return;
+            }
+          } catch(e) { console.warn("Legacy wallet parse:", e); }
+        }
+
+        showScreen("setup");
+      } catch(e) {
+        console.error("Init:", e);
+        showScreen("setup");
+      }
+    }
+
+    // ─── Create ───
+    async createNewWallet() {
+      try {
+        const w = ethers.Wallet.createRandom();
+        const mnemonic = w.mnemonic?.phrase || null;
+
+        this.walletData = {
+          privateKey: w.privateKey,
+          mnemonic,
+          address:    w.address,
+          networkId:  this.networkId,
+          tokens:     {},
+          transactions: []
+        };
+        this.signer  = w.connect(this.provider);
+        this.address = w.address;
+
+        // Build mnemonic grid
+        const grid = document.getElementById("mnemonicGrid");
+        if (grid && mnemonic) {
+          grid.innerHTML = "";
+          mnemonic.split(" ").forEach((word, i) => {
+            const el = document.createElement("div");
+            el.className = "mnemonic-word";
+            el.innerHTML = `<span class="mnemonic-num">${i+1}</span><span>${word}</span>`;
+            grid.appendChild(el);
+          });
+        }
+        showModal("mnemonicModal");
+      } catch(e) {
+        showToast("Failed to create wallet: " + e.message, "error");
+      }
+    }
+
+    // ─── Import ───
+    async importWallet() {
+      const input = document.getElementById("importData")?.value?.trim() || "";
+      if (!input) return showToast("Enter private key or seed phrase", "error");
+
+      let w;
+      try {
+        if (input.startsWith("0x") && input.length === 66) {
+          w = new ethers.Wallet(input, this.provider);
+        } else if (input.split(" ").length >= 12) {
+          w = ethers.Wallet.fromPhrase(input).connect(this.provider);
+        } else {
+          throw new Error("Invalid key or phrase");
+        }
+
+        this.walletData = {
+          privateKey: w.privateKey,
+          mnemonic:   input.split(" ").length >= 12 ? input : null,
+          address:    w.address,
+          networkId:  this.networkId,
+          tokens:     {},
+          transactions: []
+        };
+        this.signer  = w;
+        this.address = w.address;
+
+        hideModal("importModal");
+        const imp = document.getElementById("importData");
+        if (imp) imp.value = "";
+        showModal("passwordSetupModal");
+      } catch(e) {
+        showToast("Import failed: " + e.message, "error");
+      }
+    }
+
+    // ─── Balance ───
+    async updateBalance() {
+      if (!this.address || !this.provider) return;
+      try {
+        const bal = await this.provider.getBalance(this.address);
+        this.balance = ethers.formatEther(bal);
+        updateBalance(this.balance, NETWORKS[this.networkId]?.currency || "ETH");
+      } catch(e) { console.error("Balance:", e); }
+    }
+
+    // ─── Tokens ───
+    async addToken(tokenAddress) {
+      if (!tokenAddress?.trim()) return showToast("Enter token address", "error");
+      tokenAddress = tokenAddress.trim();
+      if (!ethers.isAddress(tokenAddress)) return showToast("Invalid address", "error");
+
+      showToast("Loading token info...", "info");
+      try {
+        const erc20 = new ethers.Contract(tokenAddress, [
+          "function symbol() view returns (string)",
+          "function decimals() view returns (uint8)",
+          "function balanceOf(address) view returns (uint256)"
+        ], this.provider);
+
+        const [sym, dec, bal] = await Promise.all([
+          erc20.symbol(), erc20.decimals(), erc20.balanceOf(this.address)
+        ]);
+
+        const decimals = Number(dec);
+        this.tokens[sym] = {
+          address:  tokenAddress,
+          balance:  ethers.formatUnits(bal, decimals),
+          decimals
+        };
+        this._saveTokens();
+        renderTokens(this.tokens);
+        renderPopularTokens();
+        hideModal("addTokenModal");
+        const ti = document.getElementById("tokenAddress");
+        if (ti) ti.value = "";
+        showToast(`${sym} added ✓`, "success");
+      } catch(e) {
+        showToast("Failed: " + e.message.slice(0, 60), "error");
+      }
+    }
+
+    _saveTokens() {
+      if (this.address) {
+        localStorage.setItem(
+          `tokens_${this.networkId}_${this.address}`,
+          JSON.stringify(this.tokens)
+        );
+      }
+    }
+
+    loadTokens() {
+      if (!this.address) return;
+      const saved = localStorage.getItem(`tokens_${this.networkId}_${this.address}`)
+                 || localStorage.getItem(`tokens_${this.networkId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            this.tokens = parsed;
+          } else {
+            this.tokens = {};
+          }
+          renderTokens(this.tokens);
+        } catch(e) {
+          this.tokens = {};
+          renderTokens({});
+        }
+      } else {
+        this.tokens = {};
+        renderTokens({});
+      }
+      this.refreshTokenBalances();
+    }
+
+    async refreshTokenBalances() {
+      for (const [sym, data] of Object.entries(this.tokens)) {
+        try {
+          const erc20 = new ethers.Contract(data.address, [
+            "function balanceOf(address) view returns (uint256)"
+          ], this.provider);
+          const bal = await erc20.balanceOf(this.address);
+          this.tokens[sym].balance = ethers.formatUnits(bal, data.decimals);
+        } catch(e) { /* silent */ }
+      }
+      this._saveTokens();
+      renderTokens(this.tokens);
+    }
+
+    // ─── Transactions ───
+    addTransaction(tx) {
+      this.transactions.unshift(tx);
+      if (this.transactions.length > 50) this.transactions.length = 50;
+      this._saveTxs();
+      renderTransactions(this.transactions);
+    }
+
+    _saveTxs() {
+      if (this.address) {
+        localStorage.setItem(`txs_${this.networkId}_${this.address}`, JSON.stringify(this.transactions));
+      }
+    }
+
+    loadTransactions() {
+      if (!this.address) return;
+      const saved = localStorage.getItem(`txs_${this.networkId}_${this.address}`);
+      if (saved) {
+        try {
+          this.transactions = JSON.parse(saved);
+          renderTransactions(this.transactions);
+        } catch(e) {
+          this.transactions = [];
+          renderTransactions([]);
+        }
+      } else {
+        renderTransactions([]);
+      }
+      this.fetchBlockchainTransactions();
+    }
+
+    async fetchBlockchainTransactions() {
+      if (!this.address) return;
+      const net = NETWORKS[this.networkId];
+      if (!net || !net.apiUrl) return;
+
+      const container = document.getElementById("transactionsList");
+      if (container && this.transactions.length === 0) {
+        container.innerHTML = '<p class="text-zinc-500 text-sm text-center py-6"><span class="spinner mr-2"></span>Loading transactions...</p>';
+      }
+
+      const addr = this.address.toLowerCase();
+      let allChainTxs = [];
+
+      try {
+        let url = `${net.apiUrl}?module=account&action=txlist&address=${this.address}&startblock=0&endblock=99999999&page=1&offset=30&sort=desc`;
+        if (net.apiKey) url += `&apikey=${net.apiKey}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.status === "1" && Array.isArray(data.result)) {
+          allChainTxs.push(...data.result.map(tx => {
+            const isSend = tx.from.toLowerCase() === addr;
+            return {
+              type: isSend ? "send" : "receive",
+              from: tx.from,
+              to: tx.to,
+              amount: ethers.formatEther(tx.value || "0"),
+              token: "",
+              hash: tx.hash,
+              timestamp: parseInt(tx.timeStamp) * 1000,
+              confirmed: tx.txreceipt_status === "1",
+              blockNumber: tx.blockNumber
+            };
+          }));
+        }
+      } catch(e) {
+        console.warn("Failed to fetch native transactions:", e);
+      }
+
+      try {
+        let url2 = `${net.apiUrl}?module=account&action=tokentx&address=${this.address}&startblock=0&endblock=99999999&page=1&offset=30&sort=desc`;
+        if (net.apiKey) url2 += `&apikey=${net.apiKey}`;
+        const resp2 = await fetch(url2);
+        const data2 = await resp2.json();
+        if (data2.status === "1" && Array.isArray(data2.result)) {
+          allChainTxs.push(...data2.result.map(tx => {
+            const isSend = tx.from.toLowerCase() === addr;
+            const decimals = parseInt(tx.tokenDecimal) || 18;
+            return {
+              type: isSend ? "send" : "receive",
+              from: tx.from,
+              to: tx.to,
+              amount: ethers.formatUnits(tx.value || "0", decimals),
+              token: tx.tokenSymbol || "",
+              hash: tx.hash,
+              timestamp: parseInt(tx.timeStamp) * 1000,
+              confirmed: true,
+              blockNumber: tx.blockNumber
+            };
+          }));
+        }
+      } catch(e) {
+        console.warn("Failed to fetch token transactions:", e);
+      }
+
+      if (allChainTxs.length > 0) {
+        const seenHashes = new Set();
+        const localTxs = this.transactions.filter(t => {
+          if (t.hash) { seenHashes.add(t.hash); return true; }
+          return true;
+        });
+        const merged = [...localTxs];
+        for (const ctx of allChainTxs) {
+          const key = ctx.hash + (ctx.token || "") + ctx.amount;
+          if (!seenHashes.has(key)) {
+            seenHashes.add(key);
+            merged.push(ctx);
+          }
+        }
+        merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        this.transactions = merged.slice(0, 100);
+        this._saveTxs();
+      }
+
+      renderTransactions(this.transactions);
+    }
+
+    // ─── Send ───
+    async sendTransaction() {
+      const to       = document.getElementById("sendToAddress")?.value?.trim() || "";
+      const amtStr   = document.getElementById("sendAmount")?.value || "";
+      const tokenSym = document.getElementById("sendTokenSelect")?.value || "";
+
+      if (!ethers.isAddress(to))        return showToast("Invalid recipient address", "error");
+      if (!amtStr || parseFloat(amtStr) <= 0) return showToast("Enter a valid amount", "error");
+      if (!this.signer)                  return showToast("Wallet not unlocked", "error");
+
+      const btn = document.getElementById("sendBtn");
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Sending...'; }
+
+      try {
+        let tx;
+        if (tokenSym) {
+          const td  = this.tokens[tokenSym];
+          const amt = ethers.parseUnits(amtStr, td.decimals);
+          const erc = new ethers.Contract(td.address,
+            ["function transfer(address,uint256) returns (bool)"], this.signer);
+          tx = await erc.transfer(to, amt);
+        } else {
+          tx = await this.signer.sendTransaction({
+            to, value: ethers.parseEther(amtStr)
+          });
+        }
+
+        showToast("Sent! Waiting for confirmation...", "info");
+        const receipt = await tx.wait();
+
+        this.addTransaction({
+          type: "send", to, from: this.address,
+          amount: amtStr, token: tokenSym,
+          hash: receipt.hash, timestamp: Date.now()
+        });
+
+        showToast("✅ Confirmed: " + receipt.hash.slice(0,10) + "...", "success");
+        await this.updateBalance();
+        await this.refreshTokenBalances();
+        hideModal("sendModal");
+
+        const ta = document.getElementById("sendToAddress");
+        const sa = document.getElementById("sendAmount");
+        if (ta) ta.value = "";
+        if (sa) sa.value = "";
+
+      } catch(e) {
+        showToast("Error: " + (e.reason || e.message || "Unknown").slice(0, 80), "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Send"; }
+      }
+    }
+
+    // ─── Network change ───
+    async changeNetwork(newId) {
+      if (!NETWORKS[newId]) return;
+      this.networkId = newId;
+      this.provider  = new ethers.JsonRpcProvider(NETWORKS[newId].rpc);
+      if (this.walletData?.privateKey) {
+        this.signer = new ethers.Wallet(this.walletData.privateKey, this.provider);
+      }
+      updateNetworkBadge(NETWORKS[newId].name);
+      this.tokens = {};
+      this.loadTokens();
+      await this.updateBalance();
+      showToast("Network: " + NETWORKS[newId].name, "info");
+    }
+
+    // ─── Block listener (detect incoming) ───
+    _startBlockListener() {
+      if (this.blockPollingInterval) return;
+      this.blockPollingInterval = setInterval(async () => {
+        try {
+          const oldBal = parseFloat(this.balance);
+          await this.updateBalance();
+          const newBal = parseFloat(this.balance);
+          if (!isNaN(oldBal) && !isNaN(newBal) && newBal > oldBal + 0.00005) {
+            const received = (newBal - oldBal).toFixed(6);
+            showToast("💰 Received " + received + " " + (NETWORKS[this.networkId]?.currency || ""), "success");
+            this.addTransaction({
+              type: "receive", from: null, to: this.address,
+              amount: received, token: "", timestamp: Date.now()
+            });
+          }
+        } catch(e) { /* silent */ }
+      }, 15000);
+    }
+
+    // ─── Disconnect ───
+    disconnect() {
+      if (!confirm("Log out? You'll need your password or private key to restore access.")) return;
+      this.lock();
+      closeAllModals();
+      showToast("Logged out", "info");
+      showScreen("setup");
+    }
+  }
+
+  // ================================================================
+  //  PAYMENT REQUEST HANDLER
+  // ================================================================
+  let pendingPayment = null;
+
+  function checkPaymentRequest() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("pay") !== "1") return;
+
+    const pick = (...keys) => { for (const k of keys) { const v = params.get(k); if (v != null && v !== "") return v; } return null; };
+    const to = pick("to");
+    const amount = pick("a", "amount");
+    const chain = parseInt(pick("c", "chain") || "137");
+    const token = pick("s", "token") || "";
+    const contract = pick("k", "contract") || "";
+    const decimals = parseInt(pick("d", "decimals") || "18");
+
+    if (!to || !amount) return;
+
+    pendingPayment = { to, amount, chain, token, contract, decimals };
+
+    const netName = NETWORKS[chain]?.name || `Chain ${chain}`;
+    const currency = token || NETWORKS[chain]?.currency || "ETH";
+
+    document.getElementById("payReqTo").textContent = to;
+    document.getElementById("payReqAmount").textContent = amount;
+    document.getElementById("payReqToken").textContent = currency;
+    document.getElementById("payReqNetwork").textContent = netName;
+
+    if (wallet.address && wallet.signer) {
+      showPayReqForLoggedIn();
+    } else {
+      document.getElementById("payReqWalletActions")?.classList.add("hidden");
+      document.getElementById("payReqNoWallet")?.classList.remove("hidden");
+    }
+
+    showModal("payRequestModal");
+  }
+
+  function showPayReqForLoggedIn() {
+    document.getElementById("payReqWalletActions")?.classList.remove("hidden");
+    document.getElementById("payReqNoWallet")?.classList.add("hidden");
+
+    if (pendingPayment && pendingPayment.chain !== wallet.networkId) {
+      const btn = document.getElementById("payReqSendBtn");
+      if (btn) {
+        btn.textContent = `Switch to ${NETWORKS[pendingPayment.chain]?.name || 'Network'} & Pay`;
+      }
+    }
+  }
+
+  async function executePaymentRequest() {
+    if (!pendingPayment || !wallet.signer) {
+      showToast("Unlock your wallet first", "error");
+      return;
+    }
+
+    const { to, amount, chain, token, contract, decimals } = pendingPayment;
+
+    if (chain !== wallet.networkId) {
+      await wallet.changeNetwork(chain);
+    }
+
+    const btn = document.getElementById("payReqSendBtn");
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Sending...'; }
+
+    try {
+      let tx;
+      if (contract && token) {
+        const amt = ethers.parseUnits(amount, decimals);
+        const erc = new ethers.Contract(contract,
+          ["function transfer(address,uint256) returns (bool)"], wallet.signer);
+        tx = await erc.transfer(to, amt);
+      } else {
+        tx = await wallet.signer.sendTransaction({
+          to, value: ethers.parseEther(amount)
+        });
+      }
+
+      showToast("Sent! Waiting for confirmation...", "info");
+      await tx.wait();
+
+      wallet.addTransaction({
+        type: "send", to, from: wallet.address,
+        amount, token: token || "",
+        hash: tx.hash, timestamp: Date.now(), confirmed: true
+      });
+
+      wallet.updateBalance();
+      hideModal("payRequestModal");
+      clearPaymentParams();
+      showToast("Payment completed!", "success");
+    } catch(e) {
+      showToast("Payment failed: " + e.message.slice(0, 60), "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Pay Now"; }
+    }
+  }
+
+  function clearPaymentParams() {
+    pendingPayment = null;
+    if (window.history.replaceState) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }
+
+  // ================================================================
+  //  WEB3GRAM INTEGRATION
+  //  When wallet.aliterra.space is opened from Web3Gram with
+  //  ?from=web3gram, fires after unlock to send the wallet address
+  //  back to the opener (Web3Gram app tab / Capacitor WebView).
+  // ================================================================
+  function _notifyWeb3Gram(address) {
+    if (!address) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('from') !== 'web3gram') return;
+
+    // ── 1. postMessage (browser popup mode: window.opener is the Web3Gram tab) ──
+    var target = window.opener || window.parent;
+    if (target && target !== window) {
+      try { target.postMessage({ type: 'WEB3GRAM_ADDRESS', address: address }, '*'); } catch(e) {}
+    }
+
+    // ── 2. Redirect-back (Capacitor WebView mode) ────────────────────────────
+    //  walletService passes ?return=ENCODED_APP_ORIGIN when opening wallet.aliterra.space.
+    //  After unlock we redirect back to APP_ORIGIN?w3g_addr=ADDRESS so App.tsx
+    //  can detect it on mount and auto-connect without any popup or clipboard.
+    var returnRaw = params.get('return');
+    if (returnRaw) {
+      try {
+        var returnUrl = decodeURIComponent(returnRaw);
+        var sep = returnUrl.indexOf('?') === -1 ? '?' : '&';
+        var backUrl = returnUrl + sep + 'w3g_addr=' + encodeURIComponent(address);
+        showToast('↩ Returning to Web3Gram…', 'info');
+        setTimeout(function() { window.location.href = backUrl; }, 900);
+        return;
+      } catch(e) {}
+    }
+
+    showToast('✓ Address sent to Web3Gram', 'success');
+  }
+
+  // ================================================================
+  //  BOOT
+  // ================================================================
+  const wallet = new AliTerraWallet();
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    await wallet.init();
+    checkPaymentRequest();
+  });
+  </script>
+</body>
+</html>
