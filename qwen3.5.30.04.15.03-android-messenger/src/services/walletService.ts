@@ -125,23 +125,13 @@ class WalletService {
       deepLinkFired = true;
 
       const encoded = encodeURIComponent(uri);
-      const playFallback = encodeURIComponent(
-        wallet === 'metamask'
-          ? 'https://play.google.com/store/apps/details?id=io.metamask'
-          : 'https://play.google.com/store/apps/details?id=com.wallet.crypto.trustapp'
-      );
 
       if (wallet === 'metamask') {
-        // Android Intent URL — opens MetaMask without navigating WebView
-        window.location.href =
-          `intent://wc?uri=${encoded}` +
-          `#Intent;scheme=metamask;package=io.metamask;` +
-          `S.browser_fallback_url=${playFallback};end`;
+        // metamask:// is intercepted by Capacitor's BridgeWebViewClient
+        // → bridge.launchIntent(ACTION_VIEW) → MetaMask opens, WebView stays intact
+        window.location.href = `metamask://wc?uri=${encoded}`;
       } else {
-        window.location.href =
-          `intent://wc?uri=${encoded}` +
-          `#Intent;scheme=trust;package=com.wallet.crypto.trustapp;` +
-          `S.browser_fallback_url=${playFallback};end`;
+        window.location.href = `trust://wc?uri=${encoded}`;
       }
     });
 
