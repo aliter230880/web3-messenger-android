@@ -153,6 +153,5 @@ export function useWeb3Messenger() {
     isMobile: walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
-    openInWalletBrowser: walletService.openInWalletBrowser.bind(walletService),
   };
 }
