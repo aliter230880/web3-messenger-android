@@ -51,6 +51,33 @@ class WalletService {
   /** Set this before calling connect() — fires when WC URI is ready. */
   public onDisplayUri: ((uri: string) => void) | null = null;
 
+  // ─── Reconnect relay WebSocket (call after returning from wallet app) ──────
+  async reconnectRelay(): Promise<void> {
+    if (!this.wcProvider) return;
+    try {
+      // Navigate the WC provider object tree to reach the relayer
+      const core =
+        (this.wcProvider as any)?.signer?.client?.core ||
+        (this.wcProvider as any)?.core;
+      const relayer = core?.relayer;
+      if (!relayer) return;
+
+      if (typeof relayer.restartTransport === 'function') {
+        await relayer.restartTransport();
+      } else if (
+        typeof relayer.transportClose === 'function' &&
+        typeof relayer.transportOpen === 'function'
+      ) {
+        try { await relayer.transportClose(); } catch (_) {}
+        await relayer.transportOpen();
+      } else if (typeof relayer.connect === 'function') {
+        await relayer.connect();
+      }
+    } catch (e) {
+      console.warn('[WC] reconnectRelay:', e);
+    }
+  }
+
   isCapacitor(): boolean {
     return typeof (window as any).Capacitor !== 'undefined';
   }
