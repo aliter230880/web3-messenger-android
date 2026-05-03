@@ -20,13 +20,11 @@ export function useWeb3Messenger() {
     async (connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>) => {
       const { provider, signer, address: addr, walletType } = connection;
 
-      // Preserve existing profile data (name / avatarId) set by the user
       const existingUser = useAppStore.getState().currentUser;
       const savedName    = existingUser?.name && existingUser.name !== 'Пользователь' ? existingUser.name : null;
       const savedAvatarId = existingUser?.avatarId;
 
       if (!signer) {
-        // Read-only (AliTerra) path — skip auth/xmtp/contracts
         setWallet({ isConnected: true, address: addr, chainId: 137, signer: null as any, provider: null as any });
         setE2EInitialized(false);
         setCurrentUser({
@@ -47,15 +45,10 @@ export function useWeb3Messenger() {
         console.warn('⚠️ XMTP:', e);
       }
 
-      // ── Инициализация контрактов + логин через LoginFactory ───────────────
-      let smartWalletAddress = addr; // fallback: использовать EOA напрямую
+      let smartWalletAddress = addr;
       try {
         contractService.initialize(provider!, signer);
 
-        // Выполнить логин через LoginFactory:
-        //  1. getAddress(addr, '0x')  → предсказать адрес смарт-кошелька (бесплатно)
-        //  2. isRegistered(sw)         → уже задеплоен?
-        //  3. createAccount(addr, '0x') → задеплоить если нет (gas)
         const loginResult = await contractService.loginWithFactory(addr);
         smartWalletAddress = loginResult.smartWalletAddress;
 
@@ -75,7 +68,6 @@ export function useWeb3Messenger() {
         name: savedName || authData.address,
         avatarId: savedAvatarId,
         walletAddress: addr,
-        // Сохраняем адрес смарт-кошелька как secondaryAddress
         smartWalletAddress,
         isOnline: true,
       });
@@ -113,8 +105,44 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
+  // ── Manual session check: user pressed "I confirmed" in wallet ────────────
+  // Bypasses connect() entirely — checks if MetaMask already approved the session
+  // via eth_accounts, then builds the connection from the existing WC session.
+  const checkAndFinishSession = useCallback(
+    async (wallet: 'metamask' | 'trust' | 'walletconnect'): Promise<boolean> => {
+      setIsConnecting(true);
+      setError(null);
+      try {
+        // First try to reconnect relay so pending messages arrive
+        await walletService.reconnectRelay();
+        // Wait 2s for relay handshake
+        await new Promise((r) => setTimeout(r, 2000));
+
+        const accounts = await walletService.tryGetAccounts();
+        if (accounts.length === 0) {
+          return false;
+        }
+
+        // Session exists — build connection from it
+        const connection = await walletService.connectFromExistingSession(wallet);
+        await _finishConnect(connection);
+
+        // Also resolve the pending connect() promise if it's still waiting
+        walletService.forceResolveSession();
+
+        return true;
+      } catch (err: any) {
+        console.error('❌ checkAndFinishSession:', err);
+        setError(err.message || 'Ошибка при проверке сессии');
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [_finishConnect]
+  );
+
   // ── AliTerra Wallet: address-only (read-only) connection ─────────────────
-  // Called after WalletModal receives the address via postMessage or paste.
   const connectAliTerra = useCallback(
     async (addr: string) => {
       setIsConnecting(true);
@@ -133,8 +161,6 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
-  // ── openAliTerraWallet: opens the site, listens for postMessage ──────────
-  // Returns a cancel function. Calls onAddress(addr) when address arrives.
   const openAliTerraWallet = useCallback(
     (onAddress: (address: string) => void): (() => void) => {
       return walletService.openAliTerraWallet(onAddress);
@@ -156,7 +182,6 @@ export function useWeb3Messenger() {
     }
   }, [setWallet, setE2EInitialized, setCurrentUser]);
 
-  // ── Cancel in-progress WC session ────────────────────────────────────────
   const cancelConnect = useCallback(async () => {
     try {
       await walletService.cancelConnect();
@@ -221,6 +246,7 @@ export function useWeb3Messenger() {
   return {
     connect,
     connectAliTerra,
+    checkAndFinishSession,
     openAliTerraWallet,
     disconnect,
     cancelConnect,

@@ -31,22 +31,25 @@ export interface WalletConnection {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  DEEP LINK STRATEGY (fixed):
+//  DEEP LINK + SESSION RECOVERY STRATEGY (v2):
 //
-//  On Capacitor (Android APK):
-//    Use window.open(url, '_system') — this triggers Android's Intent resolver
-//    to open MetaMask/Trust WITHOUT navigating the WebView away.
-//    window.location.href was the OLD approach that destroyed the WC session.
+//  Problem: After user approves in MetaMask and returns to the app,
+//  wcProvider.connect() doesn't resolve because the relay WebSocket
+//  disconnected while the app was backgrounded.
 //
-//  On mobile browser:
-//    Use window.open(url, '_blank') — browser tries to resolve custom scheme.
+//  Fix: Three-layer session detection:
+//    1. wcProvider.connect() promise — resolves normally on desktop/fast mobile
+//    2. wcProvider.on('connect', ...) event — fires from SDK internals
+//    3. Visibility handler: after relay reconnect, poll wcProvider.session
+//       and force-resolve the waiting promise
 //
-//  On desktop browser:
-//    Custom scheme URLs (metamask://) silently fail. Show QR only.
+//  Manual fallback: "I confirmed" button in WalletModal calls
+//  tryGetAccounts() → connectFromExistingSession() bypassing connect() entirely.
 //
-//  WC session survival:
-//    connect() promise stays alive in background regardless of UI state.
-//    visibilitychange listener reconnects the relay WebSocket on app resume.
+//  Deep link strategy:
+//    Capacitor (APK): window.open(url, '_system') → Android Intent → no WebView reset
+//    Mobile browser:  window.open(url, '_blank')
+//    Desktop:         QR code only (custom schemes silently fail)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WalletService {
@@ -55,8 +58,8 @@ class WalletService {
   private _aliTerraListener: ((ev: MessageEvent) => void) | null = null;
   private _visibilityHandler: (() => void) | null = null;
   private _aborted = false;
+  private _sessionResolve: (() => void) | null = null;
 
-  /** Set this before calling connect() — fires when WC URI is ready. */
   public onDisplayUri: ((uri: string) => void) | null = null;
 
   // ─── Platform detection ───────────────────────────────────────────────────
@@ -75,11 +78,6 @@ class WalletService {
   }
 
   // ─── Open wallet app via deep link ────────────────────────────────────────
-  //
-  //  FIXED: On Capacitor we now use window.open(url, '_system') which opens
-  //  MetaMask via Android Intent WITHOUT navigating the WebView.
-  //  This keeps the WC session alive while MetaMask is open.
-  //
   openDeepLink(uri: string, wallet: 'metamask' | 'trust' | 'walletconnect'): boolean {
     const encoded = encodeURIComponent(uri);
 
@@ -94,23 +92,13 @@ class WalletService {
 
     try {
       if (this.isCapacitor()) {
-        // On Capacitor/Android: '_system' opens via Android Intent.
-        // This does NOT navigate the WebView — it passes the URL to the OS.
-        // The WC session keeps running in the background.
+        // '_system' → Android Intent resolver → opens MetaMask WITHOUT resetting WebView
         const w = (window as any).open(url, '_system');
         if (w !== null) return true;
-        // Fallback: use Capacitor Browser plugin if available
-        const Browser = (window as any).Capacitor?.Plugins?.Browser;
-        if (Browser) {
-          Browser.open({ url }).catch(() => {});
-          return true;
-        }
         return false;
       } else {
-        // Browser: try window.open first (works on mobile web with MetaMask)
         const w = window.open(url, '_blank', 'noreferrer noopener');
         if (w) return true;
-        // Fallback: anchor click
         const a = document.createElement('a');
         a.href = url;
         a.target = '_blank';
@@ -151,9 +139,57 @@ class WalletService {
     }
   }
 
-  // ─── MetaMask (browser extension or WC) ──────────────────────────────────
+  // ─── Try to get accounts from an existing WC session ─────────────────────
+  // Called after user manually confirms: checks if MetaMask already approved
+  async tryGetAccounts(): Promise<string[]> {
+    if (!this.wcProvider) return [];
+    try {
+      const accounts = await this.wcProvider.request({
+        method: 'eth_accounts',
+      });
+      return Array.isArray(accounts) ? accounts.filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── Force-resolve the pending connect() promise ──────────────────────────
+  // Called externally when session detection succeeds (e.g. user pressed "I confirmed")
+  forceResolveSession(): boolean {
+    if (this._sessionResolve) {
+      this._sessionResolve();
+      this._sessionResolve = null;
+      return true;
+    }
+    return false;
+  }
+
+  // ─── Build WalletConnection from an already-established WC session ────────
+  // Use when connect() didn't resolve but session actually exists in provider
+  async connectFromExistingSession(
+    wallet: 'metamask' | 'trust' | 'walletconnect'
+  ): Promise<WalletConnection> {
+    if (!this.wcProvider) throw new Error('Нет активной WalletConnect сессии');
+
+    const provider = new ethers.providers.Web3Provider(
+      this.wcProvider as any,
+      'any'
+    );
+    await this._switchToPolygon(provider);
+    const signer = provider.getSigner();
+    const address = await signer.getAddress();
+    this.activeWalletType = wallet;
+
+    this.wcProvider.on('disconnect', () => {
+      this.wcProvider = null;
+      this.activeWalletType = null;
+    });
+
+    return { provider, signer, address, walletType: 'walletconnect' };
+  }
+
+  // ─── MetaMask ─────────────────────────────────────────────────────────────
   async connectMetaMask(): Promise<WalletConnection> {
-    // Use browser extension only on desktop browsers
     if (!this.isCapacitor() && !this.isMobile() && this.hasMetaMask()) {
       const win = window as any;
       const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
@@ -248,41 +284,75 @@ class WalletService {
 
     this.wcProvider = await Promise.race([initPromise, initTimeout]);
 
-    // Register display_uri — fires ONCE when WC pairing URI is ready.
-    // We DO NOT auto-open the deep link here. The user clicks a button.
-    // This prevents the race condition where location.href killed the WebView.
+    // display_uri fires once when the pairing URI is ready
     this.wcProvider.on('display_uri', (uri: string) => {
-      try {
-        this.onDisplayUri?.(uri);
-      } catch (_) {}
+      try { this.onDisplayUri?.(uri); } catch (_) {}
     });
 
-    // Reconnect relay on visibility restore (Capacitor: returning from wallet)
+    // ── Three-layer session detection ──────────────────────────────────────
+    // Layer 2: listen for 'connect' event which fires from SDK internals
+    // (including after relay reconnects and delivers pending approval)
+    const sessionPromise = new Promise<void>((resolve, reject) => {
+      this._sessionResolve = resolve;
+
+      let done = false;
+      const doResolve = () => {
+        if (done) return;
+        done = true;
+        this._sessionResolve = null;
+        resolve();
+      };
+      const doReject = (e: Error) => {
+        if (done) return;
+        done = true;
+        this._sessionResolve = null;
+        reject(e);
+      };
+
+      // Layer 1: the primary connect() promise
+      this.wcProvider.connect().then(doResolve).catch(doReject);
+
+      // Layer 2a: SDK 'connect' event — fires independently of promise
+      this.wcProvider.on('connect', () => doResolve());
+
+      // Layer 2b: session_update means approved session arrived
+      this.wcProvider.on('session_update', () => {
+        if (this.wcProvider?.session) doResolve();
+      });
+
+      // Timeout (5 minutes)
+      setTimeout(
+        () =>
+          doReject(
+            new Error(
+              'Сессия не установлена за 5 минут. Откройте кошелёк и подтвердите подключение, затем нажмите «Я подтвердил».'
+            )
+          ),
+        WC_SESSION_TIMEOUT_MS
+      );
+    });
+
+    // Layer 3: visibility handler — when user returns from MetaMask,
+    // reconnect relay then check wcProvider.session directly
     this._removeVisibilityHandler();
-    const handler = () => {
+    const handler = async () => {
       if (document.hidden || !this.wcProvider) return;
-      this.reconnectRelay().catch(() => {});
+      try {
+        await this.reconnectRelay();
+        // Give the relay 2 seconds to deliver pending session_approve
+        await this._sleep(2000);
+        if (this.wcProvider?.session && this._sessionResolve) {
+          this._sessionResolve();
+          this._sessionResolve = null;
+        }
+      } catch (_) {}
     };
     this._visibilityHandler = handler;
     document.addEventListener('visibilitychange', handler);
     window.addEventListener('focus', handler);
 
-    // Wait for wallet approval (connect() resolves when session is established)
     try {
-      await Promise.race([
-        this.wcProvider.connect(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  'Сессия не установлена за 5 минут. Откройте кошелёк и подтвердите подключение.'
-                )
-              ),
-            WC_SESSION_TIMEOUT_MS
-          )
-        ),
-      ]);
+      await sessionPromise;
     } finally {
       this._removeVisibilityHandler();
       this.onDisplayUri = null;
@@ -313,7 +383,6 @@ class WalletService {
       const returnUrl = encodeURIComponent(
         window.location.origin + window.location.pathname + '?w3g_from=aliterra'
       );
-      // Use _system to open browser without resetting WebView
       (window as any).open(
         `https://wallet.aliterra.space/?from=web3gram&return=${returnUrl}`,
         '_system'
@@ -348,6 +417,7 @@ class WalletService {
   // ─── Disconnect / Cancel ──────────────────────────────────────────────────
   async disconnect(): Promise<void> {
     this._aborted = true;
+    this._sessionResolve = null;
     this._cleanupAliTerraListener();
     this._removeVisibilityHandler();
     await this._cleanupWC();
@@ -357,6 +427,7 @@ class WalletService {
 
   async cancelConnect(): Promise<void> {
     this._aborted = true;
+    this._sessionResolve = null;
     this._cleanupAliTerraListener();
     this._removeVisibilityHandler();
     await this._cleanupWC();

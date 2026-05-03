@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as QRCode from 'qrcode';
-import { X, Copy, Check, Loader2, Clipboard, Smartphone, RefreshCw, AlertCircle } from 'lucide-react';
+import { X, Copy, Check, Loader2, Clipboard, Smartphone, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { walletService } from '../services/walletService';
@@ -58,6 +58,7 @@ type Screen =
   | 'initializing'
   | 'qr'
   | 'waiting'
+  | 'checking'
   | 'aliterra'
   | 'connected';
 
@@ -67,6 +68,7 @@ export function WalletModal() {
   const { isWalletModalOpen, toggleWalletModal } = useAppStore();
   const {
     connect, connectAliTerra, disconnect,
+    checkAndFinishSession,
     isConnecting, isConnected, address,
     isCapacitor, hasMetaMask,
     openAliTerraWallet, cancelConnect,
@@ -81,6 +83,7 @@ export function WalletModal() {
   const [pasteAddr, setPasteAddr] = useState('');
   const [aliTerraGotAddress, setAliTerraGotAddress] = useState('');
   const [deepLinkOpened, setDeepLinkOpened] = useState(false);
+  const [checkingMsg, setCheckingMsg] = useState('');
   const cancelAliTerraRef = useRef<(() => void) | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -173,7 +176,35 @@ export function WalletModal() {
     }
   };
 
-  // User returned from wallet — reconnect relay and switch back to QR
+  // ── "I confirmed in MetaMask" — manual session check ─────────────────────
+  //
+  // Problem: After approving in MetaMask and returning, connect() may not
+  // resolve because the relay WebSocket disconnected in background.
+  // This button bypasses connect() and directly queries eth_accounts.
+  //
+  const handleIConfirmed = useCallback(async () => {
+    if (!connectingFor) return;
+    setScreen('checking');
+    setCheckingMsg('Проверяем сессию с ' + (connectingFor === 'metamask' ? 'MetaMask' : connectingFor === 'trust' ? 'Trust Wallet' : 'кошельком') + '…');
+
+    try {
+      const ok = await checkAndFinishSession(connectingFor);
+      if (ok) {
+        setScreen('connected');
+        setConnectingFor(null);
+        setTimeout(() => toggleWalletModal(), 700);
+      } else {
+        // Session not found — relay may need more time, send back to waiting
+        setConnectError('Подтверждение ещё не получено. Убедитесь что нажали «Подключить» в кошельке и повторите.');
+        setScreen('waiting');
+      }
+    } catch (err: any) {
+      setConnectError(err.message || 'Ошибка при проверке сессии');
+      setScreen('waiting');
+    }
+  }, [connectingFor, checkAndFinishSession, toggleWalletModal]);
+
+  // User pressed "show QR again" after returning from wallet
   const handleReturnedFromWallet = useCallback(async () => {
     setScreen(wcUri ? 'qr' : 'initializing');
     await walletService.reconnectRelay();
@@ -269,10 +300,11 @@ export function WalletModal() {
     : screen === 'initializing' ? `Подготовка ${walletLabel}…`
     : screen === 'qr' ? 'Подключить кошелёк'
     : screen === 'waiting' ? 'Ожидание подтверждения…'
+    : screen === 'checking' ? 'Проверяем сессию…'
     : screen === 'aliterra' ? 'AliTerra Wallet'
     : 'Подключить кошелёк';
 
-  const isInProgress = screen === 'initializing' || screen === 'qr' || screen === 'waiting';
+  const isInProgress = screen === 'initializing' || screen === 'qr' || screen === 'waiting' || screen === 'checking';
 
   return (
     <AnimatePresence>
@@ -366,11 +398,34 @@ export function WalletModal() {
                 </div>
               )}
 
+              {/* ═══ CHECKING SESSION ═══════════════════════════════════════ */}
+              {screen === 'checking' && (
+                <div className="py-10 flex flex-col items-center gap-5">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
+                      {connectingFor === 'metamask' ? <MetaMaskIcon />
+                        : connectingFor === 'trust' ? <TrustWalletIcon />
+                        : <WalletConnectIcon />}
+                    </div>
+                    <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-emerald-500 rounded-full flex items-center justify-center">
+                      <Loader2 className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-semibold text-gray-900 dark:text-white">
+                      {checkingMsg || 'Проверяем сессию…'}
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      Запрашиваем адрес у кошелька…
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* ═══ QR CODE ════════════════════════════════════════════════ */}
               {screen === 'qr' && (
                 <div className="space-y-4 py-2">
 
-                  {/* QR code */}
                   <div className="flex justify-center">
                     <div className="p-3 bg-white rounded-2xl shadow-md border border-gray-100">
                       <canvas
@@ -428,7 +483,6 @@ export function WalletModal() {
                       </div>
                     </>
                   ) : (
-                    /* Desktop: explain how to scan */
                     <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3 text-center">
                       <Smartphone className="w-5 h-5 text-blue-500 mx-auto mb-1" />
                       <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">
@@ -440,7 +494,6 @@ export function WalletModal() {
                     </div>
                   )}
 
-                  {/* Copy URI */}
                   <button
                     onClick={copyWcUri}
                     className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 border border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
@@ -457,7 +510,7 @@ export function WalletModal() {
 
               {/* ═══ WAITING FOR WALLET APPROVAL ════════════════════════════ */}
               {screen === 'waiting' && (
-                <div className="py-8 flex flex-col items-center gap-5 text-center">
+                <div className="py-6 flex flex-col items-center gap-4 text-center">
                   <div className="relative">
                     <div className="w-20 h-20 rounded-2xl bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
                       {connectingFor === 'metamask' ? <MetaMaskIcon />
@@ -478,20 +531,36 @@ export function WalletModal() {
                     </p>
                   </div>
 
-                  <div className="bg-amber-50 dark:bg-amber-900/20 rounded-2xl px-5 py-4 w-full text-left space-y-1.5">
-                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide">Инструкция:</p>
+                  {connectError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2.5 w-full text-left">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-600 dark:text-red-400">{connectError}</p>
+                    </div>
+                  )}
+
+                  {/* ── KEY BUTTON: I confirmed in wallet ── */}
+                  <button
+                    onClick={handleIConfirmed}
+                    className="w-full flex items-center justify-center gap-2 py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl text-base font-semibold transition-colors shadow-lg shadow-emerald-500/20"
+                  >
+                    <CheckCircle2 className="w-5 h-5" />
+                    Я подтвердил в {walletLabel} — завершить
+                  </button>
+
+                  <div className="bg-amber-50 dark:bg-amber-900/20 rounded-2xl px-4 py-3 w-full text-left space-y-1">
+                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide">Инструкция</p>
                     <p className="text-sm text-amber-800 dark:text-amber-200">1. В {walletLabel} нажмите <b>Подключить</b></p>
                     <p className="text-sm text-amber-800 dark:text-amber-200">2. Вернитесь в это приложение</p>
-                    <p className="text-sm text-amber-800 dark:text-amber-200">3. Нажмите кнопку ниже если не подключилось</p>
+                    <p className="text-sm text-amber-800 dark:text-amber-200">3. Нажмите зелёную кнопку выше</p>
                   </div>
 
                   <div className="flex gap-2 w-full">
                     <button
                       onClick={handleReturnedFromWallet}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl text-sm font-medium transition-colors"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-2xl text-sm font-medium transition-colors"
                     >
                       <RefreshCw className="w-4 h-4" />
-                      Я вернулся — показать QR
+                      Показать QR снова
                     </button>
                     <button
                       onClick={handleCancelConnect}
@@ -658,18 +727,16 @@ export function WalletModal() {
                     <AliTerraIcon />
                     <div className="flex-1 text-left">
                       <p className="font-semibold text-gray-900 dark:text-white">AliTerra Wallet</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Перейти на wallet.aliterra.space</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Войдите через AliTerra</p>
                     </div>
                     <div className="w-6 h-6 rounded-full border-2 border-amber-300 dark:border-amber-600 group-hover:border-amber-500 flex items-center justify-center transition-colors">
                       <div className="w-2 h-2 rounded-full bg-amber-400 dark:bg-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
                   </button>
 
-                  <div className="pt-2 text-center">
-                    <p className="text-xs text-gray-400 dark:text-gray-600">
-                      Polygon Mainnet · WalletConnect v2
-                    </p>
-                  </div>
+                  <p className="text-center text-xs text-gray-400 dark:text-gray-600 pt-2">
+                    Polygon Mainnet · WalletConnect v2 · E2E шифрование
+                  </p>
                 </div>
               )}
 
