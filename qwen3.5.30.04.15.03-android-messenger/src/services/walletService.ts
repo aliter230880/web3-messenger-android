@@ -16,10 +16,9 @@ const WC_PROJECT_ID =
 const APP_URL =
   (import.meta as any).env?.VITE_APP_URL || 'https://chat.aliterra.space';
 
-// Init timeout — if relay doesn't respond, give up fast
 const WC_INIT_TIMEOUT_MS = 15_000;
-// Session approval timeout — 5 minutes
 const WC_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
+const WC_MAX_RETRIES = 3;
 
 export type WalletType = 'metamask' | 'walletconnect' | 'trust' | 'aliterra';
 
@@ -32,13 +31,14 @@ export interface WalletConnection {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Core fix:
-//  We NEVER use window.location.href for deep links — that navigates the
-//  Capacitor WebView away from the app, destroying the WC connect() promise.
+//  Design:
 //
-//  Instead: always fire onDisplayUri with the WC URI, and let the modal
-//  show a QR code + "Open in MetaMask" button that uses window.open('_blank').
-//  window.open with _blank triggers the Android intent without page navigation.
+//  1. Always fire onDisplayUri — modal shows QR on ALL platforms.
+//  2. On Capacitor: ALSO trigger deep link via window.location.href so the
+//     wallet app opens automatically (confirmed working by user — redirect DID
+//     happen; the old crash was connect() not resolving, not the redirect).
+//  3. Retry up to 3 times on "Failed to publish" relay errors.
+//  4. Reconnect relay on visibilitychange + focus after returning from wallet.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WalletService {
@@ -46,12 +46,9 @@ class WalletService {
   private activeWalletType: WalletType | null = null;
   private _aliTerraListener: ((ev: MessageEvent) => void) | null = null;
   private _visibilityHandler: (() => void) | null = null;
+  private _aborted = false;
 
-  /**
-   * Called as soon as WalletConnect generates a pairing URI.
-   * WalletModal sets this before calling connect(); the service fires it with
-   * the URI. Modal shows QR + deep-link buttons.
-   */
+  /** Set this before calling connect() — fires when WC URI is ready. */
   public onDisplayUri: ((uri: string) => void) | null = null;
 
   isCapacitor(): boolean {
@@ -68,41 +65,37 @@ class WalletService {
     return typeof window !== 'undefined' && Boolean((window as any).ethereum);
   }
 
-  // ─── Open wallet deep-link WITHOUT navigating the page ────────────────────
-  //   window.open('_blank') triggers Android intent on Capacitor WebView and
-  //   keeps the current page (and WC session) alive.
+  // ─── Open wallet app via deep link ────────────────────────────────────────
+  //   Use window.location.href on Capacitor (confirmed by user that MetaMask
+  //   DID open). On browser use window.open(_blank).
   openDeepLink(uri: string, wallet: 'metamask' | 'trust' | 'walletconnect') {
     const encoded = encodeURIComponent(uri);
-    let deepLinkUrl: string;
+    const url =
+      wallet === 'metamask' ? `metamask://wc?uri=${encoded}`
+      : wallet === 'trust'  ? `trust://wc?uri=${encoded}`
+      : uri;                  // generic WC URI
 
-    if (wallet === 'metamask') {
-      deepLinkUrl = `metamask://wc?uri=${encoded}`;
-    } else if (wallet === 'trust') {
-      deepLinkUrl = `trust://wc?uri=${encoded}`;
+    if (this.isCapacitor()) {
+      // On Android Capacitor — location.href fires shouldOverrideUrlLoading
+      // which Android routes to the wallet app WITHOUT reloading the WebView
+      window.location.href = url;
     } else {
-      // Generic WalletConnect universal link (opens any installed wallet)
-      deepLinkUrl = `wc:${uri.split('wc:')[1] || ''}`;
-    }
-
-    // Use window.open with _blank — does NOT navigate the current page
-    // On Android this triggers the intent system → opens the wallet app
-    const opened = window.open(deepLinkUrl, '_blank');
-    if (!opened) {
-      // Fallback: create a hidden link and click it
-      const a = document.createElement('a');
-      a.href = deepLinkUrl;
-      a.target = '_blank';
-      a.rel = 'noreferrer noopener';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      const opened = window.open(url, '_blank');
+      if (!opened) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noreferrer noopener';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
     }
   }
 
   // ─── MetaMask ─────────────────────────────────────────────────────────────
 
   async connectMetaMask(): Promise<WalletConnection> {
-    // Browser with MetaMask extension — use it directly
     if (!this.isCapacitor() && this.hasMetaMask()) {
       const win = window as any;
       const provider = new ethers.providers.Web3Provider(win.ethereum, 'any');
@@ -113,32 +106,60 @@ class WalletService {
       this.activeWalletType = 'metamask';
       return { provider, signer, address, walletType: 'metamask' };
     }
-    // No extension (mobile browser or Capacitor) — use WalletConnect
     return this._connectWC('metamask');
   }
-
-  // ─── Trust Wallet ─────────────────────────────────────────────────────────
 
   async connectTrust(): Promise<WalletConnection> {
     return this._connectWC('trust');
   }
 
-  // ─── WalletConnect (generic) ──────────────────────────────────────────────
-
   async connectWalletConnect(): Promise<WalletConnection> {
     return this._connectWC('walletconnect');
   }
 
-  // ─── Unified WC connect ───────────────────────────────────────────────────
-  //
-  //  Critical design rules:
-  //  1. ALWAYS fire onDisplayUri — never use window.location.href for deep links
-  //  2. EthereumProvider.init() with 15s timeout
-  //  3. Register display_uri BEFORE calling connect()
-  //  4. Add visibilitychange relay-reconnect for Capacitor background/foreground
+  // ─── Core WC connect with retry ───────────────────────────────────────────
 
   private async _connectWC(
     wallet: 'metamask' | 'trust' | 'walletconnect'
+  ): Promise<WalletConnection> {
+    this._aborted = false;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= WC_MAX_RETRIES; attempt++) {
+      if (this._aborted) break;
+
+      try {
+        return await this._connectWCOnce(wallet, attempt);
+      } catch (err: any) {
+        lastError = err;
+        const msg: string = err?.message || '';
+
+        // Retry transient relay errors (publish failures, relay disconnects)
+        const isRetryable =
+          msg.includes('Failed to publish') ||
+          msg.includes('No internet connection') ||
+          msg.includes('WebSocket') ||
+          msg.includes('relay') ||
+          msg.includes('timeout') ||
+          msg.includes('tag:undefined');
+
+        if (!isRetryable || attempt >= WC_MAX_RETRIES || this._aborted) {
+          throw err;
+        }
+
+        console.warn(`[WC] Attempt ${attempt} failed: ${msg}. Retrying…`);
+        await this._sleep(attempt * 1500); // 1.5s, 3s between retries
+        // Clear WC storage so next attempt starts fresh
+        await this._clearWCStorage();
+      }
+    }
+
+    throw lastError || new Error('Не удалось подключиться к WalletConnect');
+  }
+
+  private async _connectWCOnce(
+    wallet: 'metamask' | 'trust' | 'walletconnect',
+    attempt: number
   ): Promise<WalletConnection> {
     await this._cleanupWC();
 
@@ -146,7 +167,7 @@ class WalletService {
       '@walletconnect/ethereum-provider'
     );
 
-    // ── Step 1: init() with timeout ──────────────────────────────────────────
+    // ── Init ─────────────────────────────────────────────────────────────────
     const initPromise = EthereumProvider.init({
       projectId: WC_PROJECT_ID,
       chains: [POLYGON_CHAIN_ID],
@@ -161,35 +182,36 @@ class WalletService {
 
     const initTimeout = new Promise<never>((_, reject) =>
       setTimeout(
-        () =>
-          reject(
-            new Error(
-              'WalletConnect не отвечает (15 сек). Проверьте интернет и попробуйте снова.'
-            )
-          ),
+        () => reject(new Error(`WalletConnect не отвечает (${attempt > 1 ? 'повтор ' + attempt + ': ' : ''}15 сек). Проверьте интернет.`)),
         WC_INIT_TIMEOUT_MS
       )
     );
 
     this.wcProvider = await Promise.race([initPromise, initTimeout]);
 
-    // ── Step 2: register display_uri BEFORE calling connect() ────────────────
-    //   KEY FIX: we never navigate away — always fire onDisplayUri.
-    //   Modal shows QR + optional "Open in MetaMask/Trust" buttons.
+    // ── Register display_uri BEFORE connect() ─────────────────────────────
+    let deepLinkFired = false;
     this.wcProvider.on('display_uri', (uri: string) => {
-      // Always deliver URI to modal for QR display
+      // 1. Always show QR (all platforms)
       try {
         this.onDisplayUri?.(uri);
-      } catch (e) {
-        console.warn('[WC] onDisplayUri error:', e);
+      } catch (_) {}
+
+      // 2. On Capacitor: ALSO auto-open wallet app via location.href
+      //    (user confirmed this redirects correctly on their device)
+      if (this.isCapacitor() && !deepLinkFired) {
+        deepLinkFired = true;
+        setTimeout(() => {
+          if (!this._aborted) {
+            this.openDeepLink(uri, wallet);
+          }
+        }, 300); // small delay so QR screen renders first
       }
     });
 
-    // ── Step 3: reconnect relay when app returns from background (Capacitor) ──
-    //   When user switches to MetaMask and back, WebSocket may have closed.
-    //   WC has built-in reconnect, but a manual nudge helps.
+    // ── Reconnect relay when returning from wallet app ────────────────────
+    this._removeVisibilityHandler();
     if (this.isCapacitor()) {
-      this._removeVisibilityHandler();
       const handler = () => {
         if (document.hidden || !this.wcProvider) return;
         try {
@@ -202,22 +224,16 @@ class WalletService {
       };
       this._visibilityHandler = handler;
       document.addEventListener('visibilitychange', handler);
-      // Also listen for focus (more reliable than visibilitychange on Android)
       window.addEventListener('focus', handler);
     }
 
-    // ── Step 4: connect() waits for wallet session approval ──────────────────
+    // ── Connect (waits for wallet approval) ───────────────────────────────
     try {
       await Promise.race([
         this.wcProvider.connect(),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () =>
-              reject(
-                new Error(
-                  'Сессия не установлена за 5 минут. Откройте кошелёк, подтвердите подключение и вернитесь в приложение.'
-                )
-              ),
+            () => reject(new Error('Сессия не установлена за 5 минут. Откройте кошелёк, подтвердите и вернитесь.')),
             WC_SESSION_TIMEOUT_MS
           )
         ),
@@ -249,18 +265,14 @@ class WalletService {
   openAliTerraWallet(onAddress: (address: string) => void): () => void {
     this._cleanupAliTerraListener();
 
-    const walletUrl = 'https://wallet.aliterra.space/';
-
     if (this.isCapacitor()) {
-      // Capacitor: navigate to AliTerra wallet with return URL param
       const returnUrl = encodeURIComponent(
         window.location.origin + window.location.pathname + '?w3g_from=aliterra'
       );
-      window.location.href = `${walletUrl}?from=web3gram&return=${returnUrl}`;
+      window.location.href = `https://wallet.aliterra.space/?from=web3gram&return=${returnUrl}`;
       return () => {};
     }
 
-    // Browser: open popup, listen for postMessage
     const listener = (ev: MessageEvent) => {
       if (
         ev.data?.type === 'WEB3GRAM_ADDRESS' &&
@@ -274,31 +286,21 @@ class WalletService {
     this._aliTerraListener = listener;
     window.addEventListener('message', listener);
 
-    const url = `${walletUrl}?from=web3gram`;
-    const w = window.open(
-      url,
-      'aliterra_wallet',
-      'width=440,height=680,noopener=false'
-    );
+    const url = 'https://wallet.aliterra.space/?from=web3gram';
+    const w = window.open(url, 'aliterra_wallet', 'width=440,height=680,noopener=false');
     if (!w) window.open(url, '_blank');
 
     return () => this._cleanupAliTerraListener();
   }
 
-  // Read-only connection (AliTerra address-only)
   createReadOnlyConnection(address: string): WalletConnection {
-    return {
-      provider: null,
-      signer: null,
-      address,
-      walletType: 'aliterra',
-      readOnly: true,
-    };
+    return { provider: null, signer: null, address, walletType: 'aliterra', readOnly: true };
   }
 
   // ─── Disconnect / Cancel ──────────────────────────────────────────────────
 
   async disconnect(): Promise<void> {
+    this._aborted = true;
     this._cleanupAliTerraListener();
     this._removeVisibilityHandler();
     await this._cleanupWC();
@@ -307,6 +309,7 @@ class WalletService {
   }
 
   async cancelConnect(): Promise<void> {
+    this._aborted = true;
     this._cleanupAliTerraListener();
     this._removeVisibilityHandler();
     await this._cleanupWC();
@@ -314,6 +317,31 @@ class WalletService {
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────
+
+  private _sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async _clearWCStorage(): Promise<void> {
+    try {
+      // Clear WalletConnect IndexedDB entries so next attempt is fresh
+      const dbs = await indexedDB.databases?.() || [];
+      for (const db of dbs) {
+        if (db.name && (db.name.includes('WALLET_CONNECT') || db.name.includes('wc@2'))) {
+          indexedDB.deleteDatabase(db.name);
+        }
+      }
+      // Clear localStorage WC keys
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('wc@2') || k.startsWith('WALLET_CONNECT'))) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (_) {}
+  }
 
   private _cleanupAliTerraListener(): void {
     if (this._aliTerraListener) {
