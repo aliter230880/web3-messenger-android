@@ -37,19 +37,34 @@ export function useWeb3Messenger() {
         return;
       }
 
+      // authService.authenticate() has built-in 6s timeout on signMessage.
+      // It falls back to a local seed if MetaMask is in background — never hangs.
       const authData = await authService.authenticate(signer);
 
+      // XMTP Client.create() also calls signer.signMessage() internally.
+      // Wrap with 10s timeout so it never blocks the UI.
       try {
-        await xmtpService.initialize(signer);
+        await Promise.race([
+          xmtpService.initialize(signer),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('XMTP timeout')), 10_000)
+          ),
+        ]);
       } catch (e) {
-        console.warn('⚠️ XMTP:', e);
+        console.warn('⚠️ XMTP (skipped):', e);
       }
 
+      // Smart-wallet contract call — also wrap with timeout.
       let smartWalletAddress = addr;
       try {
         contractService.initialize(provider!, signer);
 
-        const loginResult = await contractService.loginWithFactory(addr);
+        const loginResult = await Promise.race([
+          contractService.loginWithFactory(addr),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('LoginFactory timeout')), 12_000)
+          ),
+        ]);
         smartWalletAddress = loginResult.smartWalletAddress;
 
         if (!loginResult.alreadyRegistered) {
@@ -58,7 +73,7 @@ export function useWeb3Messenger() {
           console.log('✅ Смарт-кошелёк найден в LoginFactory:', smartWalletAddress);
         }
       } catch (e) {
-        console.warn('⚠️ Контракты/LoginFactory:', e);
+        console.warn('⚠️ Контракты/LoginFactory (skipped):', e);
       }
 
       setWallet({ isConnected: true, address: addr, chainId: 137, signer, provider });
