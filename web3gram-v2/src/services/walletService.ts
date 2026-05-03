@@ -171,6 +171,11 @@ class WalletService {
   ): Promise<WalletConnection> {
     if (!this.wcProvider) throw new Error('Нет активной WalletConnect сессии');
 
+    // Give the WalletConnect transport 1.5s to fully settle before first RPC call.
+    // Without this pause, ethers.getNetwork() fails with NETWORK_ERROR because
+    // the JSON-RPC relay isn't ready immediately after session approval.
+    await this._sleep(1500);
+
     const provider = new ethers.providers.Web3Provider(
       this.wcProvider as any,
       'any'
@@ -483,19 +488,47 @@ class WalletService {
   }
 
   private async _switchToPolygon(
-    provider: ethers.providers.Web3Provider
+    provider: ethers.providers.Web3Provider,
+    maxRetries = 4
   ): Promise<void> {
-    const network = await provider.getNetwork();
-    if (network.chainId === POLYGON_CHAIN_ID) return;
-    try {
-      await provider.send('wallet_switchEthereumChain', [{ chainId: '0x89' }]);
-    } catch (err: any) {
-      if (err.code === 4902 || err?.data?.originalError?.code === 4902) {
-        await provider.send('wallet_addEthereumChain', [POLYGON_PARAMS]);
-      } else {
-        throw new Error('Переключитесь на Polygon Mainnet в кошельке');
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const network = await provider.getNetwork();
+        if (network.chainId === POLYGON_CHAIN_ID) return;
+
+        try {
+          await provider.send('wallet_switchEthereumChain', [{ chainId: '0x89' }]);
+          return;
+        } catch (err: any) {
+          if (err.code === 4902 || err?.data?.originalError?.code === 4902) {
+            await provider.send('wallet_addEthereumChain', [POLYGON_PARAMS]);
+            return;
+          }
+          throw new Error('Переключитесь на Polygon Mainnet в кошельке');
+        }
+      } catch (err: any) {
+        const msg: string = err?.message || '';
+        // NETWORK_ERROR / noNetwork: WC transport not yet ready — wait and retry
+        if (
+          msg.includes('noNetwork') ||
+          msg.includes('NETWORK_ERROR') ||
+          msg.includes('could not detect network') ||
+          msg.includes('underlying network changed')
+        ) {
+          lastError = err;
+          const delay = 1500 * (attempt + 1);
+          console.warn(`[WC] getNetwork attempt ${attempt + 1} failed, retrying in ${delay}ms…`);
+          await this._sleep(delay);
+          continue;
+        }
+        // For other errors (e.g. "switch to Polygon") propagate immediately
+        throw err;
       }
     }
+
+    throw lastError || new Error('Не удалось определить сеть. Убедитесь что кошелёк подключён к Polygon.');
   }
 }
 
