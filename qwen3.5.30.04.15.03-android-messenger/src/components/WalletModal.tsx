@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import * as QRCode from 'qrcode';
 import { X, Copy, Check, ExternalLink, Loader2, Clipboard, Smartphone } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
@@ -80,6 +81,33 @@ export function WalletModal() {
   const [pasteAddr, setPasteAddr] = useState('');
   const [aliTerraGotAddress, setAliTerraGotAddress] = useState('');
   const cancelAliTerraRef = useRef<(() => void) | null>(null);
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // ── Render QR code locally (no external API) ─────────────────────────────
+  useEffect(() => {
+    if (!wcUri || !qrCanvasRef.current) return;
+    QRCode.toCanvas(qrCanvasRef.current, wcUri, {
+      width: 220,
+      margin: 2,
+      color: { dark: '#000000', light: '#FFFFFF' },
+    }).catch(console.error);
+  }, [wcUri, screen]);
+
+  // ── Auto-reconnect relay when returning from wallet app ──────────────────
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden) return;
+      if ((screen === 'waiting' || screen === 'qr') && wcUri) {
+        walletService.reconnectRelay();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [screen, wcUri]);
 
   useEffect(() => {
     if (!isWalletModalOpen) {
@@ -144,10 +172,12 @@ export function WalletModal() {
     setScreen('waiting');
   };
 
-  // User returned from wallet app — switch back to QR so they can see status
-  const handleReturnedFromWallet = () => {
+  // User returned from wallet app — reconnect relay and show QR
+  const handleReturnedFromWallet = useCallback(async () => {
     setScreen(wcUri ? 'qr' : 'initializing');
-  };
+    // Reconnect relay WebSocket so pending session approval is delivered
+    await walletService.reconnectRelay();
+  }, [wcUri]);
 
   // ── AliTerra ──────────────────────────────────────────────────────────────
   const handleOpenAliTerra = () => {
@@ -214,9 +244,6 @@ export function WalletModal() {
     }
   };
 
-  const qrImageUrl = wcUri
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(wcUri)}`
-    : '';
 
   // ── Disconnect ────────────────────────────────────────────────────────────
   const handleDisconnect = async () => {
@@ -343,22 +370,15 @@ export function WalletModal() {
                     Отсканируйте QR-код или нажмите кнопку ниже
                   </p>
 
-                  {/* QR code */}
+                  {/* QR code — rendered locally via qrcode library */}
                   <div className="flex justify-center">
                     <div className="p-3 bg-white rounded-2xl shadow-md border border-gray-100">
-                      {qrImageUrl ? (
-                        <img
-                          src={qrImageUrl}
-                          alt="WalletConnect QR"
-                          width={220}
-                          height={220}
-                          className="rounded-xl"
-                        />
-                      ) : (
-                        <div className="w-[220px] h-[220px] flex items-center justify-center">
-                          <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
-                        </div>
-                      )}
+                      <canvas
+                        ref={qrCanvasRef}
+                        width={220}
+                        height={220}
+                        className="rounded-xl"
+                      />
                     </div>
                   </div>
 
