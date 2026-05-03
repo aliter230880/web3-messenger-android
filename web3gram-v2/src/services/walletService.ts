@@ -114,39 +114,84 @@ class WalletService {
   }
 
   // ─── Reconnect relay WebSocket (call after returning from wallet app) ──────
+  // IMPORTANT: has a 5-second timeout — never hangs the UI.
   async reconnectRelay(): Promise<void> {
     if (!this.wcProvider) return;
     try {
-      const core =
-        (this.wcProvider as any)?.signer?.client?.core ||
-        (this.wcProvider as any)?.core;
-      const relayer = core?.relayer;
-      if (!relayer) return;
-
-      if (typeof relayer.restartTransport === 'function') {
-        await relayer.restartTransport();
-      } else if (
-        typeof relayer.transportClose === 'function' &&
-        typeof relayer.transportOpen === 'function'
-      ) {
-        try { await relayer.transportClose(); } catch (_) {}
-        await relayer.transportOpen();
-      } else if (typeof relayer.connect === 'function') {
-        await relayer.connect();
-      }
+      await Promise.race([
+        this._doReconnectRelay(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+      ]);
     } catch (e) {
       console.warn('[WC] reconnectRelay:', e);
     }
   }
 
+  private async _doReconnectRelay(): Promise<void> {
+    const core =
+      (this.wcProvider as any)?.signer?.client?.core ||
+      (this.wcProvider as any)?.core;
+    const relayer = core?.relayer;
+    if (!relayer) return;
+
+    if (typeof relayer.restartTransport === 'function') {
+      await relayer.restartTransport();
+    } else if (
+      typeof relayer.transportClose === 'function' &&
+      typeof relayer.transportOpen === 'function'
+    ) {
+      try { await relayer.transportClose(); } catch (_) {}
+      await relayer.transportOpen();
+    } else if (typeof relayer.connect === 'function') {
+      await relayer.connect();
+    }
+  }
+
   // ─── Try to get accounts from an existing WC session ─────────────────────
-  // Called after user manually confirms: checks if MetaMask already approved
+  //
+  // STRATEGY: First read from the WC session object directly (INSTANT, no RPC).
+  // The session stores accounts as "eip155:137:0xABC..." in namespaces.
+  // Only fall back to eth_accounts RPC if the session object doesn't have them.
+  //
   async tryGetAccounts(): Promise<string[]> {
     if (!this.wcProvider) return [];
+
+    // Primary: read from session object — no relay, no RPC, instant
     try {
-      const accounts = await this.wcProvider.request({
-        method: 'eth_accounts',
-      });
+      const ns = (this.wcProvider as any)?.session?.namespaces;
+      if (ns) {
+        const allAccounts: string[] = [];
+        for (const key of Object.keys(ns)) {
+          const accts = ns[key]?.accounts;
+          if (Array.isArray(accts)) {
+            for (const a of accts) {
+              // Format: "eip155:137:0xABC..."
+              const parts = a.split(':');
+              const addr = parts[parts.length - 1];
+              if (addr?.startsWith('0x')) allAccounts.push(addr);
+            }
+          }
+        }
+        if (allAccounts.length > 0) return [...new Set(allAccounts)];
+      }
+    } catch (_) {}
+
+    // Also check wcProvider.accounts (some versions expose this directly)
+    try {
+      const directAccounts = (this.wcProvider as any)?.accounts;
+      if (Array.isArray(directAccounts) && directAccounts.length > 0) {
+        return directAccounts.filter(Boolean);
+      }
+    } catch (_) {}
+
+    // Fallback: eth_accounts RPC with 8-second timeout
+    try {
+      const accounts = await Promise.race([
+        this.wcProvider.request({ method: 'eth_accounts' }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('eth_accounts timeout')), 8000)
+        ),
+      ]);
       return Array.isArray(accounts) ? accounts.filter(Boolean) : [];
     } catch {
       return [];
@@ -165,24 +210,44 @@ class WalletService {
   }
 
   // ─── Build WalletConnection from an already-established WC session ────────
-  // Use when connect() didn't resolve but session actually exists in provider
+  //
+  // KEY DESIGN: MetaMask is in the background when this runs.
+  // We MUST NOT make blocking RPC calls that require user interaction (e.g.
+  // wallet_switchEthereumChain). Instead:
+  //   1. Get address from wcProvider.session object (instant, no RPC)
+  //   2. Try network check with 8s timeout — if it fails, skip silently
+  //      (user is already on Polygon if they used MetaMask normally)
+  //   3. Build provider/signer using the address we already know
+  //
   async connectFromExistingSession(
     wallet: 'metamask' | 'trust' | 'walletconnect'
   ): Promise<WalletConnection> {
     if (!this.wcProvider) throw new Error('Нет активной WalletConnect сессии');
 
-    // Give the WalletConnect transport 1.5s to fully settle before first RPC call.
-    // Without this pause, ethers.getNetwork() fails with NETWORK_ERROR because
-    // the JSON-RPC relay isn't ready immediately after session approval.
-    await this._sleep(1500);
+    // Step 1: Get address from session object — NO RPC, instant
+    const accounts = await this.tryGetAccounts();
+    if (accounts.length === 0) {
+      throw new Error('Адрес кошелька не найден в сессии. Попробуйте подключиться заново.');
+    }
+    const address = accounts[0];
 
+    // Step 2: Build ethers provider
     const provider = new ethers.providers.Web3Provider(
       this.wcProvider as any,
       'any'
     );
-    await this._switchToPolygon(provider);
+
+    // Step 3: Try network check/switch with hard 8s timeout.
+    // wallet_switchEthereumChain requires MetaMask UI — skip if timeout.
+    // Most users already have Polygon selected in MetaMask after connecting.
+    await Promise.race([
+      this._switchToPolygon(provider).catch((e: Error) => {
+        console.warn('[WC] Network switch skipped (MetaMask in background):', e.message);
+      }),
+      new Promise<void>((resolve) => setTimeout(resolve, 8000)),
+    ]);
+
     const signer = provider.getSigner();
-    const address = await signer.getAddress();
     this.activeWalletType = wallet;
 
     this.wcProvider.on('disconnect', () => {

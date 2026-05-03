@@ -106,31 +106,49 @@ export function useWeb3Messenger() {
   );
 
   // ── Manual session check: user pressed "I confirmed" in wallet ────────────
-  // Bypasses connect() entirely — checks if MetaMask already approved the session
-  // via eth_accounts, then builds the connection from the existing WC session.
+  //
+  // DESIGN: MetaMask is in background. We MUST NOT hang on RPC calls.
+  // tryGetAccounts() reads from wcProvider.session object (instant, no relay).
+  // connectFromExistingSession() uses address from session + non-blocking network check.
+  // Overall timeout: 20s. reconnectRelay timeout: 5s (built-in).
+  //
   const checkAndFinishSession = useCallback(
     async (wallet: 'metamask' | 'trust' | 'walletconnect'): Promise<boolean> => {
       setIsConnecting(true);
       setError(null);
-      try {
-        // First try to reconnect relay so pending messages arrive
-        await walletService.reconnectRelay();
-        // Wait 2s for relay handshake
-        await new Promise((r) => setTimeout(r, 2000));
 
+      const doCheck = async (): Promise<boolean> => {
+        // Reconnect relay (5s timeout built-in) so session data is fresh
+        await walletService.reconnectRelay();
+
+        // Read accounts from WC session object — instant, no RPC needed
         const accounts = await walletService.tryGetAccounts();
         if (accounts.length === 0) {
           return false;
         }
 
-        // Session exists — build connection from it
+        // Build connection — address from session, network check with 8s cap
         const connection = await walletService.connectFromExistingSession(wallet);
         await _finishConnect(connection);
 
-        // Also resolve the pending connect() promise if it's still waiting
+        // Also resolve the still-waiting connect() promise
         walletService.forceResolveSession();
 
         return true;
+      };
+
+      try {
+        // Hard 20s timeout for the entire manual check flow
+        const result = await Promise.race([
+          doCheck(),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Превышено время ожидания (20с). Попробуйте ещё раз.')),
+              20_000
+            )
+          ),
+        ]);
+        return result;
       } catch (err: any) {
         console.error('❌ checkAndFinishSession:', err);
         setError(err.message || 'Ошибка при проверке сессии');
