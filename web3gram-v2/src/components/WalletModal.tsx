@@ -59,6 +59,7 @@ type Screen =
   | 'qr'
   | 'waiting'
   | 'checking'
+  | 'signing'
   | 'aliterra'
   | 'connected';
 
@@ -68,7 +69,7 @@ export function WalletModal() {
   const { isWalletModalOpen, toggleWalletModal } = useAppStore();
   const {
     connect, connectAliTerra, disconnect,
-    checkAndFinishSession,
+    checkSessionOnly, finishConnectAuth,
     isConnecting, isConnected, address,
     isCapacitor, hasMetaMask,
     openAliTerraWallet, cancelConnect,
@@ -86,6 +87,9 @@ export function WalletModal() {
   const [checkingMsg, setCheckingMsg] = useState('');
   const cancelAliTerraRef = useRef<(() => void) | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Holds the WC connection obtained in Phase 1 (session check) so Phase 2
+  // (signing) can use it without redoing the session lookup.
+  const pendingConnectionRef = useRef<any>(null);
 
   // ── Render QR code locally ────────────────────────────────────────────────
   useEffect(() => {
@@ -100,10 +104,11 @@ export function WalletModal() {
   }, [wcUri, screen]);
 
   // ── Auto-reconnect relay when returning from wallet app ──────────────────
+  // For 'signing' screen: reconnect relay so buffered sign-response arrives.
   useEffect(() => {
     const onVisible = () => {
       if (document.hidden) return;
-      if ((screen === 'waiting' || screen === 'qr') && wcUri) {
+      if ((screen === 'waiting' || screen === 'qr' || screen === 'signing') && wcUri) {
         walletService.reconnectRelay().catch(() => {});
       }
     };
@@ -176,33 +181,52 @@ export function WalletModal() {
     }
   };
 
-  // ── "I confirmed in MetaMask" — manual session check ─────────────────────
+  // ── Phase 1: "I confirmed in MetaMask" → check session, then open for signing
   //
-  // Problem: After approving in MetaMask and returning, connect() may not
-  // resolve because the relay WebSocket disconnected in background.
-  // This button bypasses connect() and directly queries eth_accounts.
+  // Two-phase flow so the user sees the sign request directly in MetaMask:
+  //   Phase 1 (this fn): verify WC session exists (instant, no signing)
+  //   Phase 2 (handleSigningDone): called after user returns from signing
   //
   const handleIConfirmed = useCallback(async () => {
     if (!connectingFor) return;
+    setConnectError(null);
     setScreen('checking');
-    setCheckingMsg('Проверяем сессию с ' + (connectingFor === 'metamask' ? 'MetaMask' : connectingFor === 'trust' ? 'Trust Wallet' : 'кошельком') + '…');
+    setCheckingMsg('Проверяем сессию…');
 
-    try {
-      const ok = await checkAndFinishSession(connectingFor);
-      if (ok) {
+    // Phase 1 — read WC session object (no RPC, instant)
+    const connection = await checkSessionOnly(connectingFor);
+
+    if (!connection) {
+      setConnectError('Подтверждение не получено. Убедитесь что нажали «Подключить» в кошельке и повторите.');
+      setScreen('waiting');
+      return;
+    }
+
+    // Session found — save it for Phase 2
+    pendingConnectionRef.current = connection;
+
+    // Open MetaMask so the sign request is visible immediately
+    walletService.openWalletApp(connectingFor);
+
+    // Switch to signing screen — Phase 2 starts when user returns
+    setScreen('signing');
+    setCheckingMsg('');
+
+    // Start auth in background: signMessage goes to MetaMask relay (90s timeout).
+    // MetaMask is now open — user sees the request immediately or in Activity tab.
+    // visibilitychange (user returns) reconnects relay → signature arrives → resolves.
+    finishConnectAuth(connection)
+      .then(() => {
         setScreen('connected');
         setConnectingFor(null);
         setTimeout(() => toggleWalletModal(), 700);
-      } else {
-        // Session not found — relay may need more time, send back to waiting
-        setConnectError('Подтверждение ещё не получено. Убедитесь что нажали «Подключить» в кошельке и повторите.');
+      })
+      .catch((err: any) => {
+        setConnectError(err.message || 'Ошибка при подписи');
         setScreen('waiting');
-      }
-    } catch (err: any) {
-      setConnectError(err.message || 'Ошибка при проверке сессии');
-      setScreen('waiting');
-    }
-  }, [connectingFor, checkAndFinishSession, toggleWalletModal]);
+        pendingConnectionRef.current = null;
+      });
+  }, [connectingFor, checkSessionOnly, finishConnectAuth, toggleWalletModal]);
 
   // User pressed "show QR again" after returning from wallet
   const handleReturnedFromWallet = useCallback(async () => {
@@ -301,10 +325,11 @@ export function WalletModal() {
     : screen === 'qr' ? 'Подключить кошелёк'
     : screen === 'waiting' ? 'Ожидание подтверждения…'
     : screen === 'checking' ? 'Проверяем сессию…'
+    : screen === 'signing' ? 'Подтвердите подпись'
     : screen === 'aliterra' ? 'AliTerra Wallet'
     : 'Подключить кошелёк';
 
-  const isInProgress = screen === 'initializing' || screen === 'qr' || screen === 'waiting' || screen === 'checking';
+  const isInProgress = screen === 'initializing' || screen === 'qr' || screen === 'waiting' || screen === 'checking' || screen === 'signing';
 
   return (
     <AnimatePresence>
@@ -419,6 +444,74 @@ export function WalletModal() {
                       Запрашиваем адрес у кошелька…
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* ═══ SIGNING SCREEN ═════════════════════════════════════════ */}
+              {/* Shown after WC session confirmed; user needs to sign in wallet */}
+              {screen === 'signing' && (
+                <div className="py-6 flex flex-col items-center gap-4 text-center">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-2xl bg-violet-50 dark:bg-violet-900/20 flex items-center justify-center">
+                      {connectingFor === 'metamask' ? <MetaMaskIcon />
+                        : connectingFor === 'trust' ? <TrustWalletIcon />
+                        : <WalletConnectIcon />}
+                    </div>
+                    <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-violet-500 rounded-full flex items-center justify-center">
+                      <Loader2 className="w-4 h-4 text-white animate-spin" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-base font-semibold text-gray-900 dark:text-white">
+                      Ожидаем подпись в {walletLabel}…
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      Запрос отправлен — подтвердите в кошельке
+                    </p>
+                  </div>
+
+                  {/* Step-by-step instruction */}
+                  <div className="bg-violet-50 dark:bg-violet-900/20 rounded-2xl px-4 py-3 w-full text-left space-y-2">
+                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wide">
+                      Как подтвердить подпись
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-violet-500 text-white text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
+                      <p className="text-sm text-violet-900 dark:text-violet-200">
+                        Откройте <b>{walletLabel}</b> кнопкой ниже
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-violet-500 text-white text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
+                      <p className="text-sm text-violet-900 dark:text-violet-200">
+                        Если запрос не виден — перейдите во вкладку{' '}
+                        <b>«Активность»</b> (колокольчик / уведомления)
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-full bg-violet-500 text-white text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
+                      <p className="text-sm text-violet-900 dark:text-violet-200">
+                        Нажмите <b>«Подписать»</b> и вернитесь в мессенджер
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Open wallet button */}
+                  <button
+                    onClick={() => walletService.openWalletApp(connectingFor!)}
+                    className="w-full flex items-center justify-center gap-2 py-4 bg-violet-500 hover:bg-violet-600 text-white rounded-2xl text-base font-semibold transition-colors shadow-lg shadow-violet-500/25"
+                  >
+                    {connectingFor === 'metamask' ? <MetaMaskIcon /> : connectingFor === 'trust' ? <TrustWalletIcon /> : <WalletConnectIcon />}
+                    Открыть {walletLabel}
+                  </button>
+
+                  <button
+                    onClick={handleCancelConnect}
+                    className="px-6 py-2 text-sm text-gray-400 hover:text-gray-600 border border-gray-200 dark:border-gray-700 rounded-xl"
+                  >
+                    Отмена
+                  </button>
                 </div>
               )}
 

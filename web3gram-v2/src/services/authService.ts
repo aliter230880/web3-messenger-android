@@ -74,12 +74,14 @@ export class AuthService {
     let fromSignature = true;
 
     try {
+      // 90 second timeout: user needs time to open MetaMask, find the
+      // request (may be in Activity tab), and confirm it.
       signature = await Promise.race([
         signer.signMessage(AUTH_MESSAGE),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('signMessage timeout — MetaMask in background')),
-            6000
+            () => reject(new Error('signMessage timeout — пользователь не подтвердил подпись')),
+            90_000
           )
         ),
       ]);

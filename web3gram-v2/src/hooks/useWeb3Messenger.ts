@@ -120,59 +120,72 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
-  // ── Manual session check: user pressed "I confirmed" in wallet ────────────
+  // ── Phase 1: Check if WC session exists — NO signing, instant ────────────
   //
-  // DESIGN: MetaMask is in background. We MUST NOT hang on RPC calls.
-  // tryGetAccounts() reads from wcProvider.session object (instant, no relay).
-  // connectFromExistingSession() uses address from session + non-blocking network check.
-  // Overall timeout: 20s. reconnectRelay timeout: 5s (built-in).
+  // Reads accounts from wcProvider.session object (no relay, no RPC).
+  // Returns the WalletConnection (address only) or null if no session.
+  // Does NOT call _finishConnect — caller must do that separately.
   //
-  const checkAndFinishSession = useCallback(
-    async (wallet: 'metamask' | 'trust' | 'walletconnect'): Promise<boolean> => {
-      setIsConnecting(true);
+  const checkSessionOnly = useCallback(
+    async (
+      wallet: 'metamask' | 'trust' | 'walletconnect'
+    ): Promise<Awaited<ReturnType<typeof walletService.connectFromExistingSession>> | null> => {
       setError(null);
-
-      const doCheck = async (): Promise<boolean> => {
-        // Reconnect relay (5s timeout built-in) so session data is fresh
+      try {
+        // Reconnect relay (5s timeout built-in)
         await walletService.reconnectRelay();
 
-        // Read accounts from WC session object — instant, no RPC needed
+        // Read accounts from session object — instant, no RPC
         const accounts = await walletService.tryGetAccounts();
-        if (accounts.length === 0) {
-          return false;
-        }
+        if (accounts.length === 0) return null;
 
-        // Build connection — address from session, network check with 8s cap
-        const connection = await walletService.connectFromExistingSession(wallet);
-        await _finishConnect(connection);
-
-        // Also resolve the still-waiting connect() promise
-        walletService.forceResolveSession();
-
-        return true;
-      };
-
-      try {
-        // Hard 20s timeout for the entire manual check flow
-        const result = await Promise.race([
-          doCheck(),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Превышено время ожидания (20с). Попробуйте ещё раз.')),
-              20_000
-            )
-          ),
-        ]);
-        return result;
+        // Build connection from session (address from session, network check 8s cap)
+        return await walletService.connectFromExistingSession(wallet);
       } catch (err: any) {
-        console.error('❌ checkAndFinishSession:', err);
-        setError(err.message || 'Ошибка при проверке сессии');
+        console.error('❌ checkSessionOnly:', err);
+        return null;
+      }
+    },
+    []
+  );
+
+  // ── Phase 2: Finish auth after session is confirmed ───────────────────────
+  //
+  // Calls _finishConnect (authService.authenticate → signMessage,
+  // xmtpService.initialize, contractService.loginWithFactory).
+  //
+  // signMessage has a 90s timeout — user has time to open MetaMask,
+  // find the request (Activity tab if needed), and confirm it.
+  //
+  const finishConnectAuth = useCallback(
+    async (
+      connection: Awaited<ReturnType<typeof walletService.connectFromExistingSession>>
+    ): Promise<void> => {
+      setIsConnecting(true);
+      setError(null);
+      try {
+        await _finishConnect(connection);
+        walletService.forceResolveSession();
+      } catch (err: any) {
+        console.error('❌ finishConnectAuth:', err);
+        setError(err.message || 'Ошибка подключения');
         throw err;
       } finally {
         setIsConnecting(false);
       }
     },
     [_finishConnect]
+  );
+
+  // ── Legacy combined check (kept for compatibility) ────────────────────────
+  const checkAndFinishSession = useCallback(
+    async (wallet: 'metamask' | 'trust' | 'walletconnect'): Promise<boolean> => {
+      const connection = await checkSessionOnly(wallet);
+      if (!connection) return false;
+      await finishConnectAuth(connection);
+      return true;
+    },
+    [checkSessionOnly, finishConnectAuth]
   );
 
   // ── AliTerra Wallet: address-only (read-only) connection ─────────────────
@@ -280,6 +293,8 @@ export function useWeb3Messenger() {
     connect,
     connectAliTerra,
     checkAndFinishSession,
+    checkSessionOnly,
+    finishConnectAuth,
     openAliTerraWallet,
     disconnect,
     cancelConnect,

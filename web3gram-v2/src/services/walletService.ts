@@ -77,6 +77,30 @@ class WalletService {
     return typeof window !== 'undefined' && Boolean((window as any).ethereum);
   }
 
+  // ─── Open wallet app without a WC URI (just bring it to foreground) ────────
+  // Used for the signing step: app → MetaMask → user sees sign request → signs
+  openWalletApp(wallet: 'metamask' | 'trust' | 'walletconnect'): boolean {
+    let url: string;
+    if (wallet === 'metamask') {
+      url = 'metamask://';
+    } else if (wallet === 'trust') {
+      url = 'trust://';
+    } else {
+      return false;
+    }
+    try {
+      if (this.isCapacitor()) {
+        (window as any).open(url, '_system');
+        return true;
+      } else {
+        window.open(url, '_blank', 'noreferrer noopener');
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+
   // ─── Open wallet app via deep link ────────────────────────────────────────
   openDeepLink(uri: string, wallet: 'metamask' | 'trust' | 'walletconnect'): boolean {
     const encoded = encodeURIComponent(uri);
