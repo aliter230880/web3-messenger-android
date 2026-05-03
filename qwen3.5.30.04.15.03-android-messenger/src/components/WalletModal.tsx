@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as QRCode from 'qrcode';
-import { X, Copy, Check, ExternalLink, Loader2, Clipboard, Smartphone } from 'lucide-react';
+import { X, Copy, Check, Loader2, Clipboard, Smartphone, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { walletService } from '../services/walletService';
@@ -55,9 +55,9 @@ const AliTerraIcon = () => (
 
 type Screen =
   | 'picker'
-  | 'initializing'  // EthereumProvider.init() in progress
-  | 'qr'            // WC URI ready — show QR + deep-link buttons (ALL platforms)
-  | 'waiting'       // User opened wallet app, waiting for approval
+  | 'initializing'
+  | 'qr'
+  | 'waiting'
   | 'aliterra'
   | 'connected';
 
@@ -80,13 +80,16 @@ export function WalletModal() {
   const [uriCopied, setUriCopied] = useState(false);
   const [pasteAddr, setPasteAddr] = useState('');
   const [aliTerraGotAddress, setAliTerraGotAddress] = useState('');
+  const [deepLinkOpened, setDeepLinkOpened] = useState(false);
   const cancelAliTerraRef = useRef<(() => void) | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // ── Render QR code locally (no external API) ─────────────────────────────
+  // ── Render QR code locally ────────────────────────────────────────────────
   useEffect(() => {
-    if (!wcUri || !qrCanvasRef.current) return;
-    QRCode.toCanvas(qrCanvasRef.current, wcUri, {
+    if (!wcUri) return;
+    const canvas = qrCanvasRef.current;
+    if (!canvas) return;
+    QRCode.toCanvas(canvas, wcUri, {
       width: 220,
       margin: 2,
       color: { dark: '#000000', light: '#FFFFFF' },
@@ -98,7 +101,7 @@ export function WalletModal() {
     const onVisible = () => {
       if (document.hidden) return;
       if ((screen === 'waiting' || screen === 'qr') && wcUri) {
-        walletService.reconnectRelay();
+        walletService.reconnectRelay().catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -116,25 +119,20 @@ export function WalletModal() {
       setWcUri('');
       setPasteAddr('');
       setAliTerraGotAddress('');
+      setDeepLinkOpened(false);
     } else {
       setScreen(isConnected ? 'connected' : 'picker');
     }
   }, [isWalletModalOpen, isConnected]);
 
   // ── Connect MetaMask / Trust / WalletConnect ──────────────────────────────
-  //
-  //  KEY FIX: We ALWAYS set walletService.onDisplayUri regardless of platform.
-  //  The service will call it as soon as the WC pairing URI is ready.
-  //  The QR screen shows the URI + "Open in wallet" buttons (window.open,
-  //  which does NOT navigate the WebView away on Capacitor/Android).
-
   const handleConnect = async (wallet: 'metamask' | 'trust' | 'walletconnect') => {
     setConnectError(null);
     setConnectingFor(wallet);
     setWcUri('');
+    setDeepLinkOpened(false);
     setScreen('initializing');
 
-    // Capture WC URI on ALL platforms (Capacitor + browser)
     walletService.onDisplayUri = (uri: string) => {
       setWcUri(uri);
       setScreen('qr');
@@ -143,7 +141,7 @@ export function WalletModal() {
     connect(wallet)
       .then(() => {
         setScreen('connected');
-        setTimeout(() => toggleWalletModal(), 500);
+        setTimeout(() => toggleWalletModal(), 600);
       })
       .catch((err: any) => {
         setConnectError(err.message || 'Ошибка подключения');
@@ -161,21 +159,23 @@ export function WalletModal() {
     setConnectingFor(null);
     setConnectError(null);
     setWcUri('');
+    setDeepLinkOpened(false);
     setScreen('picker');
   };
 
-  // When user taps "Open in MetaMask/Trust" on the QR screen
+  // Open wallet via deep link — works on mobile/APK
   const handleOpenInWallet = (wallet: 'metamask' | 'trust' | 'walletconnect') => {
     if (!wcUri) return;
-    walletService.openDeepLink(wcUri, wallet);
-    // Switch to "waiting" screen — the WC session is still alive
-    setScreen('waiting');
+    const ok = walletService.openDeepLink(wcUri, wallet);
+    if (ok) {
+      setDeepLinkOpened(true);
+      setScreen('waiting');
+    }
   };
 
-  // User returned from wallet app — reconnect relay and show QR
+  // User returned from wallet — reconnect relay and switch back to QR
   const handleReturnedFromWallet = useCallback(async () => {
     setScreen(wcUri ? 'qr' : 'initializing');
-    // Reconnect relay WebSocket so pending session approval is delivered
     await walletService.reconnectRelay();
   }, [wcUri]);
 
@@ -217,11 +217,10 @@ export function WalletModal() {
     cancelAliTerraRef.current = null;
     setConnectError(null);
     setScreen('initializing');
-    setConnectingFor(null);
     try {
       await connectAliTerra(addr);
       setScreen('connected');
-      setTimeout(() => toggleWalletModal(), 500);
+      setTimeout(() => toggleWalletModal(), 600);
     } catch (err: any) {
       setConnectError(err.message || 'Ошибка');
       setScreen('picker');
@@ -235,7 +234,7 @@ export function WalletModal() {
     } catch (_) {}
   };
 
-  // ── QR helpers ────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const copyWcUri = () => {
     if (wcUri) {
       navigator.clipboard.writeText(wcUri).catch(() => {});
@@ -244,8 +243,6 @@ export function WalletModal() {
     }
   };
 
-
-  // ── Disconnect ────────────────────────────────────────────────────────────
   const handleDisconnect = async () => {
     await disconnect();
     setScreen('picker');
@@ -259,6 +256,8 @@ export function WalletModal() {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const isMobileOrCapacitor = isCapacitor || walletService.isMobile();
 
   const walletLabel =
     connectingFor === 'metamask' ? 'MetaMask'
@@ -318,7 +317,7 @@ export function WalletModal() {
                     <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 mb-4">
                       <Check className="w-10 h-10 text-white" />
                     </div>
-                    <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">Подключено</h3>
+                    <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">Подключено!</h3>
                     <span className="inline-block mt-1 px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs rounded-full font-medium">
                       ✓ Polygon Mainnet
                     </span>
@@ -354,8 +353,12 @@ export function WalletModal() {
                     </div>
                   </div>
                   <div className="text-center">
-                    <p className="text-base font-semibold text-gray-900 dark:text-white">Соединяемся с {walletLabel}…</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Генерируем QR-код, подождите</p>
+                    <p className="text-base font-semibold text-gray-900 dark:text-white">
+                      Генерируем QR-код…
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                      Соединяемся с {walletLabel} через WalletConnect
+                    </p>
                   </div>
                   <button onClick={handleCancelConnect} className="px-8 py-2 text-sm text-gray-400 hover:text-gray-600 border border-gray-200 dark:border-gray-700 rounded-xl">
                     Отмена
@@ -363,14 +366,11 @@ export function WalletModal() {
                 </div>
               )}
 
-              {/* ═══ QR CODE + DEEP LINK BUTTONS (all platforms) ════════════ */}
+              {/* ═══ QR CODE ════════════════════════════════════════════════ */}
               {screen === 'qr' && (
                 <div className="space-y-4 py-2">
-                  <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-                    Отсканируйте QR-код или нажмите кнопку ниже
-                  </p>
 
-                  {/* QR code — rendered locally via qrcode library */}
+                  {/* QR code */}
                   <div className="flex justify-center">
                     <div className="p-3 bg-white rounded-2xl shadow-md border border-gray-100">
                       <canvas
@@ -382,23 +382,63 @@ export function WalletModal() {
                     </div>
                   </div>
 
-                  {/* Deep-link buttons — use window.open(_blank), NOT location.href */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => handleOpenInWallet('metamask')}
-                      className="flex items-center justify-center gap-2 py-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-xl text-sm font-medium text-orange-700 dark:text-orange-300 hover:bg-orange-100 transition-colors"
-                    >
-                      <MetaMaskIcon />
-                      <span>MetaMask</span>
-                    </button>
-                    <button
-                      onClick={() => handleOpenInWallet('trust')}
-                      className="flex items-center justify-center gap-2 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 transition-colors"
-                    >
-                      <TrustWalletIcon />
-                      <span>Trust</span>
-                    </button>
-                  </div>
+                  {/* Mobile/Capacitor: show "Open in wallet" buttons */}
+                  {isMobileOrCapacitor ? (
+                    <>
+                      <p className="text-center text-sm text-gray-500 dark:text-gray-400">
+                        Нажмите кнопку ниже, чтобы открыть кошелёк
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(connectingFor === 'metamask' || connectingFor === 'walletconnect') && (
+                          <button
+                            onClick={() => handleOpenInWallet('metamask')}
+                            className="flex items-center justify-center gap-2 py-3.5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-xl text-sm font-medium text-orange-700 dark:text-orange-300 hover:bg-orange-100 transition-colors"
+                          >
+                            <MetaMaskIcon />
+                            <span>MetaMask</span>
+                          </button>
+                        )}
+                        {(connectingFor === 'trust' || connectingFor === 'walletconnect') && (
+                          <button
+                            onClick={() => handleOpenInWallet('trust')}
+                            className="flex items-center justify-center gap-2 py-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 transition-colors"
+                          >
+                            <TrustWalletIcon />
+                            <span>Trust</span>
+                          </button>
+                        )}
+                        {connectingFor === 'metamask' && (
+                          <button
+                            onClick={() => handleOpenInWallet('trust')}
+                            className="flex items-center justify-center gap-2 py-3.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 transition-colors"
+                          >
+                            <TrustWalletIcon />
+                            <span>Trust</span>
+                          </button>
+                        )}
+                        {connectingFor === 'trust' && (
+                          <button
+                            onClick={() => handleOpenInWallet('metamask')}
+                            className="flex items-center justify-center gap-2 py-3.5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-xl text-sm font-medium text-orange-700 dark:text-orange-300 hover:bg-orange-100 transition-colors"
+                          >
+                            <MetaMaskIcon />
+                            <span>MetaMask</span>
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    /* Desktop: explain how to scan */
+                    <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3 text-center">
+                      <Smartphone className="w-5 h-5 text-blue-500 mx-auto mb-1" />
+                      <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">
+                        Отсканируйте QR кодом в MetaMask или Trust Wallet
+                      </p>
+                      <p className="text-xs text-blue-500 dark:text-blue-400 mt-1">
+                        В кошельке: WalletConnect → Сканировать QR
+                      </p>
+                    </div>
+                  )}
 
                   {/* Copy URI */}
                   <button
@@ -406,15 +446,8 @@ export function WalletModal() {
                     className="w-full flex items-center justify-center gap-2 py-2.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 border border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
                   >
                     {uriCopied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                    {uriCopied ? 'Скопировано!' : 'Скопировать URI'}
+                    {uriCopied ? 'Скопировано!' : 'Скопировать WC URI'}
                   </button>
-
-                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-3">
-                    <p className="text-xs text-blue-700 dark:text-blue-300 text-center">
-                      <Smartphone className="w-3 h-3 inline mr-1" />
-                      Кошелёк → WalletConnect → Сканировать QR
-                    </p>
-                  </div>
 
                   <button onClick={handleCancelConnect} className="w-full text-sm text-gray-400 hover:text-gray-600 py-2">
                     Отмена
@@ -435,25 +468,29 @@ export function WalletModal() {
                       <Loader2 className="w-4 h-4 text-white animate-spin" />
                     </div>
                   </div>
+
                   <div>
                     <p className="text-base font-semibold text-gray-900 dark:text-white">
                       Подтвердите в {walletLabel}
                     </p>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                      Нажмите «Подключить» в приложении кошелька, затем вернитесь сюда
+                      Нажмите «Подключить» в кошельке, затем вернитесь сюда
                     </p>
                   </div>
+
                   <div className="bg-amber-50 dark:bg-amber-900/20 rounded-2xl px-5 py-4 w-full text-left space-y-1.5">
-                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase">Что делать:</p>
+                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide">Инструкция:</p>
                     <p className="text-sm text-amber-800 dark:text-amber-200">1. В {walletLabel} нажмите <b>Подключить</b></p>
-                    <p className="text-sm text-amber-800 dark:text-amber-200">2. Вернитесь в Web3Gram</p>
-                    <p className="text-sm text-amber-800 dark:text-amber-200">3. Подождите 3–5 секунд</p>
+                    <p className="text-sm text-amber-800 dark:text-amber-200">2. Вернитесь в это приложение</p>
+                    <p className="text-sm text-amber-800 dark:text-amber-200">3. Нажмите кнопку ниже если не подключилось</p>
                   </div>
+
                   <div className="flex gap-2 w-full">
                     <button
                       onClick={handleReturnedFromWallet}
-                      className="flex-1 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl text-sm font-medium transition-colors"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl text-sm font-medium transition-colors"
                     >
+                      <RefreshCw className="w-4 h-4" />
                       Я вернулся — показать QR
                     </button>
                     <button
@@ -463,74 +500,103 @@ export function WalletModal() {
                       Отмена
                     </button>
                   </div>
+
+                  {/* Retry deep link */}
+                  {deepLinkOpened && wcUri && (
+                    <div className="flex gap-2 w-full">
+                      {connectingFor !== 'trust' && (
+                        <button
+                          onClick={() => walletService.openDeepLink(wcUri, 'metamask')}
+                          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-xl text-xs font-medium text-orange-700 dark:text-orange-300"
+                        >
+                          <MetaMaskIcon />
+                          Открыть MetaMask снова
+                        </button>
+                      )}
+                      {connectingFor !== 'metamask' && (
+                        <button
+                          onClick={() => walletService.openDeepLink(wcUri, 'trust')}
+                          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl text-xs font-medium text-blue-700 dark:text-blue-300"
+                        >
+                          <TrustWalletIcon />
+                          Открыть Trust снова
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* ═══ ALITERRA POPUP ═════════════════════════════════════════ */}
+              {/* ═══ ALITERRA SCREEN ════════════════════════════════════════ */}
               {screen === 'aliterra' && (
-                <div className="space-y-4 py-2">
-                  <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-900/20 rounded-2xl p-4">
-                    <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-800/40 flex items-center justify-center shrink-0">
+                <div className="space-y-5 py-2">
+                  <div className="text-center">
+                    <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-[#0f0f1a] mb-3">
                       <AliTerraIcon />
                     </div>
-                    <div>
-                      {aliTerraGotAddress ? (
-                        <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">✓ Адрес получен автоматически</p>
-                      ) : (
-                        <>
-                          <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">wallet.aliterra.space открыт</p>
-                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Войдите в кошелёк — адрес подтянется сам</p>
-                        </>
-                      )}
-                    </div>
-                    {!aliTerraGotAddress && <Loader2 className="w-4 h-4 text-amber-500 animate-spin ml-auto shrink-0" />}
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {aliTerraGotAddress
+                        ? 'Адрес получен! Нажмите «Подключить»'
+                        : 'Сайт AliTerra открылся в новой вкладке. Войдите там и вернитесь сюда.'}
+                    </p>
                   </div>
 
-                  <button
-                    onClick={() => window.open('https://wallet.aliterra.space/?from=web3gram', 'aliterra_wallet', 'width=440,height=680,noopener=false')}
-                    className="w-full flex items-center justify-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    Открыть снова
-                  </button>
+                  {aliTerraGotAddress && (
+                    <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-3 text-center">
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 font-mono break-all">
+                        {aliTerraGotAddress}
+                      </p>
+                    </div>
+                  )}
 
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Или вставьте адрес вручную:</p>
+                  <div className="space-y-2">
+                    <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                      Или вставьте адрес вручную
+                    </label>
                     <div className="flex gap-2">
                       <input
-                        type="text"
                         value={pasteAddr}
                         onChange={(e) => setPasteAddr(e.target.value)}
                         placeholder="0x..."
-                        className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm font-mono text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:border-blue-400"
+                        className="flex-1 px-3 py-2.5 bg-gray-100 dark:bg-gray-800 rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 outline-none focus:ring-2 focus:ring-blue-400"
                       />
-                      <button onClick={handlePasteFromClipboard} className="p-2.5 bg-gray-100 dark:bg-gray-700 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-                        <Clipboard className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                      <button
+                        onClick={handlePasteFromClipboard}
+                        className="p-2.5 bg-gray-100 dark:bg-gray-800 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        title="Вставить из буфера"
+                      >
+                        <Clipboard className="w-4 h-4 text-gray-500" />
                       </button>
                     </div>
                   </div>
 
-                  {connectError && <p className="text-sm text-red-500 text-center">{connectError}</p>}
+                  {connectError && (
+                    <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2.5">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      <p className="text-sm text-red-600 dark:text-red-400">{connectError}</p>
+                    </div>
+                  )}
 
                   <button
                     onClick={handleConfirmAliTerra}
-                    disabled={!pasteAddr.trim() && !aliTerraGotAddress}
+                    disabled={!pasteAddr && !aliTerraGotAddress}
                     className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-medium rounded-2xl transition-colors"
                   >
                     Подключить
                   </button>
-
                   <button onClick={handleCancelAliTerra} className="w-full text-sm text-gray-400 hover:text-gray-600 py-2">
                     Отмена
                   </button>
                 </div>
               )}
 
-              {/* ═══ PICKER ═════════════════════════════════════════════════ */}
+              {/* ═══ PICKER ══════════════════════════════════════════════════ */}
               {screen === 'picker' && (
                 <div className="space-y-3">
+
                   {connectError && (
-                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl px-4 py-3">
+                    <div className="flex items-start gap-2.5 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 rounded-2xl px-4 py-3 mb-1">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
                       <p className="text-sm text-red-600 dark:text-red-400">{connectError}</p>
                     </div>
                   )}
@@ -538,70 +604,75 @@ export function WalletModal() {
                   {/* MetaMask */}
                   <button
                     onClick={() => handleConnect('metamask')}
-                    className="w-full flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 hover:bg-orange-50 dark:hover:bg-orange-900/20 border border-transparent hover:border-orange-200 dark:hover:border-orange-700 rounded-2xl transition-all group"
+                    className="w-full flex items-center gap-4 p-4 bg-orange-50 dark:bg-orange-900/10 hover:bg-orange-100 dark:hover:bg-orange-900/20 border border-orange-100 dark:border-orange-800 rounded-2xl transition-all group"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-white dark:bg-gray-700 shadow-sm flex items-center justify-center shrink-0">
-                      <MetaMaskIcon />
-                    </div>
-                    <div className="text-left flex-1">
+                    <MetaMaskIcon />
+                    <div className="flex-1 text-left">
                       <p className="font-semibold text-gray-900 dark:text-white">MetaMask</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {hasMetaMask ? 'Расширение обнаружено' : 'Через QR-код или приложение'}
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {!isCapacitor && hasMetaMask
+                          ? 'Подключить через расширение браузера'
+                          : 'Открыть через WalletConnect'}
                       </p>
                     </div>
-                    <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 group-hover:border-orange-400 transition-colors shrink-0" />
+                    <div className="w-6 h-6 rounded-full border-2 border-orange-300 dark:border-orange-600 group-hover:border-orange-500 flex items-center justify-center transition-colors">
+                      <div className="w-2 h-2 rounded-full bg-orange-400 dark:bg-orange-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
                   </button>
 
                   {/* Trust Wallet */}
                   <button
                     onClick={() => handleConnect('trust')}
-                    className="w-full flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-transparent hover:border-blue-200 dark:hover:border-blue-700 rounded-2xl transition-all group"
+                    className="w-full flex items-center gap-4 p-4 bg-blue-50 dark:bg-blue-900/10 hover:bg-blue-100 dark:hover:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-2xl transition-all group"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-white dark:bg-gray-700 shadow-sm flex items-center justify-center shrink-0">
-                      <TrustWalletIcon />
-                    </div>
-                    <div className="text-left flex-1">
+                    <TrustWalletIcon />
+                    <div className="flex-1 text-left">
                       <p className="font-semibold text-gray-900 dark:text-white">Trust Wallet</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Через QR-код или приложение</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Открыть через WalletConnect</p>
                     </div>
-                    <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 group-hover:border-blue-400 transition-colors shrink-0" />
+                    <div className="w-6 h-6 rounded-full border-2 border-blue-300 dark:border-blue-600 group-hover:border-blue-500 flex items-center justify-center transition-colors">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 dark:bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
                   </button>
 
-                  {/* WalletConnect */}
+                  {/* WalletConnect (generic) */}
                   <button
                     onClick={() => handleConnect('walletconnect')}
-                    className="w-full flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-transparent hover:border-blue-200 dark:hover:border-blue-700 rounded-2xl transition-all group"
+                    className="w-full flex items-center gap-4 p-4 bg-[#3B99FC]/5 hover:bg-[#3B99FC]/10 border border-[#3B99FC]/20 rounded-2xl transition-all group"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-white dark:bg-gray-700 shadow-sm flex items-center justify-center shrink-0">
-                      <WalletConnectIcon />
-                    </div>
-                    <div className="text-left flex-1">
+                    <WalletConnectIcon />
+                    <div className="flex-1 text-left">
                       <p className="font-semibold text-gray-900 dark:text-white">WalletConnect</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Любой совместимый кошелёк</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Любой совместимый кошелёк</p>
                     </div>
-                    <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 group-hover:border-blue-400 transition-colors shrink-0" />
+                    <div className="w-6 h-6 rounded-full border-2 border-[#3B99FC]/40 group-hover:border-[#3B99FC] flex items-center justify-center transition-colors">
+                      <div className="w-2 h-2 rounded-full bg-[#3B99FC] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
                   </button>
 
                   {/* AliTerra */}
                   <button
                     onClick={handleOpenAliTerra}
-                    className="w-full flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-transparent hover:border-amber-200 dark:hover:border-amber-700 rounded-2xl transition-all group"
+                    className="w-full flex items-center gap-4 p-4 bg-[#0f0f1a]/5 hover:bg-[#0f0f1a]/10 dark:bg-white/5 dark:hover:bg-white/10 border border-amber-200 dark:border-amber-800 rounded-2xl transition-all group"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-white dark:bg-gray-700 shadow-sm flex items-center justify-center shrink-0">
-                      <AliTerraIcon />
-                    </div>
-                    <div className="text-left flex-1">
+                    <AliTerraIcon />
+                    <div className="flex-1 text-left">
                       <p className="font-semibold text-gray-900 dark:text-white">AliTerra Wallet</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">wallet.aliterra.space</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Перейти на wallet.aliterra.space</p>
                     </div>
-                    <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 group-hover:border-amber-400 transition-colors shrink-0" />
+                    <div className="w-6 h-6 rounded-full border-2 border-amber-300 dark:border-amber-600 group-hover:border-amber-500 flex items-center justify-center transition-colors">
+                      <div className="w-2 h-2 rounded-full bg-amber-400 dark:bg-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
                   </button>
 
-                  <p className="text-center text-xs text-gray-400 dark:text-gray-500 pt-1">
-                    Polygon Mainnet · E2E шифрование
-                  </p>
+                  <div className="pt-2 text-center">
+                    <p className="text-xs text-gray-400 dark:text-gray-600">
+                      Polygon Mainnet · WalletConnect v2
+                    </p>
+                  </div>
                 </div>
               )}
+
             </div>
           </motion.div>
         </>
