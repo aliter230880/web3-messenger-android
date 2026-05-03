@@ -1,0 +1,165 @@
+name: Build APK (web3gram-v2)
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "web3gram-v2/**"
+      - ".github/workflows/build-apk-v2.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" && yes | sdkmanager --licenses || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        working-directory: web3gram-v2
+        run: npm install --legacy-peer-deps
+
+      - name: Install WalletConnect + Capacitor
+        working-directory: web3gram-v2
+        run: |
+          npm install --legacy-peer-deps \
+            @walletconnect/ethereum-provider@^2.23.9 \
+            vite-plugin-node-polyfills@^0.22.0 \
+            @tailwindcss/vite tailwindcss \
+            framer-motion lucide-react \
+            ethers@^5.7.2 zustand@^5.0.0 \
+            qrcode@^1.5.4 @types/qrcode
+          npm install --legacy-peer-deps \
+            @capacitor/core @capacitor/cli \
+            @capacitor/android @capacitor/splash-screen \
+            @capacitor/browser
+
+      - name: Create vite.config.ts
+        working-directory: web3gram-v2
+        run: |
+          cat > vite.config.ts << 'EOF'
+          import { defineConfig } from "vite";
+          import react from "@vitejs/plugin-react";
+          import tailwindcss from "@tailwindcss/vite";
+          import { nodePolyfills } from "vite-plugin-node-polyfills";
+          export default defineConfig({
+            base: "./",
+            plugins: [
+              nodePolyfills({ include: ["buffer","stream","util","events","process"] }),
+              react(),
+              tailwindcss(),
+            ],
+            define: { global: "globalThis" },
+            resolve: { dedupe: ["react","react-dom"] },
+            build: { outDir: "dist", emptyOutDir: true },
+          });
+          EOF
+
+      - name: Build web app
+        working-directory: web3gram-v2
+        env:
+          VITE_WALLETCONNECT_PROJECT_ID: "2de1d724533083c2ed68197548dead4e"
+          VITE_APP_URL: "https://chat.aliterra.space"
+        run: npm run build
+
+      - name: Create capacitor.config.json
+        working-directory: web3gram-v2
+        run: |
+          rm -f capacitor.config.ts
+          cat > capacitor.config.json << 'EOF'
+          {
+            "appId": "andr.web3gram",
+            "appName": "Web3Gram",
+            "webDir": "dist",
+            "allowNavigation": [
+              "*.walletconnect.com","*.walletconnect.org",
+              "*.infura.io","wallet.aliterra.space","chat.aliterra.space"
+            ],
+            "server": { "androidScheme": "https" },
+            "android": { "allowMixedContent": true }
+          }
+          EOF
+
+      - name: Add Android platform
+        working-directory: web3gram-v2
+        run: rm -rf android && npx cap add android && npx cap sync android
+
+      - name: Patch network_security_config
+        working-directory: web3gram-v2/android/app/src/main/res/xml
+        run: |
+          cat > network_security_config.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+            <base-config cleartextTrafficPermitted="true">
+              <trust-anchors>
+                <certificates src="system"/>
+                <certificates src="user"/>
+              </trust-anchors>
+            </base-config>
+            <domain-config cleartextTrafficPermitted="true">
+              <domain includeSubdomains="true">walletconnect.com</domain>
+              <domain includeSubdomains="true">walletconnect.org</domain>
+              <domain includeSubdomains="true">relay.walletconnect.com</domain>
+              <domain includeSubdomains="true">relay.walletconnect.org</domain>
+              <domain includeSubdomains="true">explorer-api.walletconnect.com</domain>
+              <domain includeSubdomains="true">verify.walletconnect.com</domain>
+              <domain includeSubdomains="true">chat.aliterra.space</domain>
+              <domain includeSubdomains="true">wallet.aliterra.space</domain>
+              <domain includeSubdomains="true">polygon-rpc.com</domain>
+            </domain-config>
+          </network-security-config>
+          EOF
+
+      - name: Patch AndroidManifest
+        working-directory: web3gram-v2/android/app/src/main
+        run: |
+          if ! grep -q "metamask" AndroidManifest.xml; then
+            sed -i 's|</manifest>|    <queries>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="metamask"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="trust"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="wc"/></intent>\n    </queries>\n</manifest>|' AndroidManifest.xml
+          fi
+
+      - name: Fix Kotlin duplicates
+        working-directory: web3gram-v2/android
+        run: |
+          cat >> build.gradle << 'EOF'
+          subprojects {
+            configurations.all {
+              resolutionStrategy {
+                force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
+                force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22"
+                force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"
+              }
+            }
+          }
+          EOF
+
+      - name: Build debug APK
+        working-directory: web3gram-v2/android
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log; exit ${PIPESTATUS[0]}
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log-v2
+          path: /tmp/gradle.log
+          retention-days: 3
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3gram-v2-debug
+          path: web3gram-v2/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
