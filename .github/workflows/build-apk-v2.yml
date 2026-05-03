@@ -22,17 +22,19 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK components
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" && yes | sdkmanager --licenses || true
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          yes | sdkmanager --licenses || true
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install deps
+      - name: Install base deps
         working-directory: web3gram-v2
         run: npm install --legacy-peer-deps
 
-      - name: Install WalletConnect + Capacitor
+      - name: Install WalletConnect + UI deps
         working-directory: web3gram-v2
         run: |
           npm install --legacy-peer-deps \
@@ -42,10 +44,13 @@ jobs:
             framer-motion lucide-react \
             ethers@^5.7.2 zustand@^5.0.0 \
             qrcode@^1.5.4 @types/qrcode
+
+      - name: Install Capacitor
+        working-directory: web3gram-v2
+        run: |
           npm install --legacy-peer-deps \
             @capacitor/core @capacitor/cli \
-            @capacitor/android @capacitor/splash-screen \
-            @capacitor/browser
+            @capacitor/android @capacitor/splash-screen
 
       - name: Create vite.config.ts
         working-directory: web3gram-v2
@@ -130,7 +135,7 @@ jobs:
             sed -i 's|</manifest>|    <queries>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="metamask"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="trust"/></intent>\n        <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="wc"/></intent>\n    </queries>\n</manifest>|' AndroidManifest.xml
           fi
 
-      - name: Fix Kotlin duplicates
+      - name: Fix Kotlin + AGP compatibility
         working-directory: web3gram-v2/android
         run: |
           cat >> build.gradle << 'EOF'
@@ -140,6 +145,7 @@ jobs:
                 force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
                 force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22"
                 force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"
+                force "androidx.browser:browser:1.8.0"
               }
             }
           }
