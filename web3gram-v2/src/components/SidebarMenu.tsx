@@ -90,7 +90,11 @@ export function SidebarMenu({ isOpen, onClose }: SidebarMenuProps) {
                     {wallet.isConnected ? 'Web3 кошелёк' : 'Подключить кошелёк'}
                   </p>
                   <p className="text-sm text-gray-500">
-                    {wallet.balance || 'Не подключён'}
+                    {wallet.isConnected
+                      ? wallet.address
+                        ? `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`
+                        : 'Подключено'
+                      : 'Не подключён'}
                   </p>
                 </div>
               </button>
