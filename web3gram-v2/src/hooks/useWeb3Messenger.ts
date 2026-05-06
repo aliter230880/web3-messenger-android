@@ -8,11 +8,12 @@ import { encryptionService } from '../services/encryptionService';
 import type { Chat, Message } from '../types';
 
 export function useWeb3Messenger() {
-  const { setWallet, setE2EInitialized, setXmtpReady, setCurrentUser } = useAppStore();
+  const { setWallet, setE2EInitialized, setXmtpReady, setXmtpAvailable, setCurrentUser } = useAppStore();
   const isConnected    = useAppStore((s) => s.wallet.isConnected);
   const address        = useAppStore((s) => s.wallet.address);
   const isE2EInitialized = useAppStore((s) => s.e2e.isInitialized);
   const xmtpReady      = useAppStore((s) => s.e2e.xmtpReady);
+  const xmtpAvailable  = useAppStore((s) => s.e2e.xmtpAvailable);
 
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError]       = useState<string | null>(null);
@@ -60,21 +61,21 @@ export function useWeb3Messenger() {
       }
 
       // ── STEP 4: XMTP — background, не блокирует UI ───────────────────
-      // При первом подключении: 1 подпись MetaMask
-      // При повторном: ключи из IndexedDB, без подписи
-      // ВАЖНО: setXmtpReady(true) вызывается В ЛЮБОМ СЛУЧАЕ (успех или таймаут/ошибка)
-      // чтобы UI не висел вечно в "XMTP подключается..."
+      // xmtpReady(true)     → всегда (через max 9с) → UI разблокирован
+      // xmtpAvailable(true) → только при успехе     → сообщения дойдут
       xmtpService.initialize(signer)
         .then(() => {
           console.log('✅ XMTP ready');
           setXmtpReady(true);
+          setXmtpAvailable(true);
         })
         .catch((e) => {
           console.warn('⚠️ XMTP недоступен (работаем без E2E):', e?.message ?? e);
           setXmtpReady(true); // разблокируем UI даже если XMTP упал
+          // xmtpAvailable остаётся false → авто-ретрай в App.tsx
         });
     },
-    [setWallet, setE2EInitialized, setXmtpReady, setCurrentUser]
+    [setWallet, setE2EInitialized, setXmtpReady, setXmtpAvailable, setCurrentUser]
   );
 
   // ── Standard wallet connect ───────────────────────────────────────────────
@@ -188,11 +189,28 @@ export function useWeb3Messenger() {
       setWallet({ isConnected: false, address: null, chainId: null });
       setE2EInitialized(false);
       setXmtpReady(false);
+      setXmtpAvailable(false);
       setCurrentUser(null);
     } catch (err) {
       console.error('❌ Ошибка отключения:', err);
     }
-  }, [setWallet, setE2EInitialized, setXmtpReady, setCurrentUser]);
+  }, [setWallet, setE2EInitialized, setXmtpReady, setXmtpAvailable, setCurrentUser]);
+
+  // ── Retry XMTP (called by App.tsx on interval when xmtpReady but not available) ──
+  const retryXmtp = useCallback(async () => {
+    const store  = useAppStore.getState();
+    const signer = store.wallet.signer;
+    if (!signer || xmtpService.isInitialized()) return;
+
+    console.log('🔄 XMTP retry...');
+    try {
+      await xmtpService.initialize(signer);
+      console.log('✅ XMTP retry success');
+      setXmtpAvailable(true);
+    } catch (e: any) {
+      console.warn('⚠️ XMTP retry failed:', e?.message ?? e);
+    }
+  }, [setXmtpAvailable]);
 
   const cancelConnect = useCallback(async () => {
     try { await walletService.cancelConnect(); } catch (_) {}
@@ -427,6 +445,8 @@ export function useWeb3Messenger() {
     address,
     isE2EInitialized,
     xmtpReady,
+    xmtpAvailable,
+    retryXmtp,
     isMobile:    walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
