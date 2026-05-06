@@ -44,38 +44,40 @@ export class XMTPService {
   }
 
   async initialize(signer: Signer): Promise<void> {
-    // Try production first with 5-second timeout
+    // Fast path: skip re-publishing the contact bundle for returning users.
+    // This saves 1-2 network round-trips and is the #1 speedup for reconnects.
+    // Timeout: 4s — if relay doesn't respond in time, throw so caller can retry.
     try {
-      this.client = await XMTPService._createWithTimeout(signer, { env: 'production' }, 5000);
+      this.client = await XMTPService._createWithTimeout(
+        signer,
+        { env: 'production', skipContactPublishing: true } as any,
+        4000
+      );
       this._env = 'production';
-      console.log('✅ XMTP [production]:', this.client.address);
+      console.log('✅ XMTP [production fast]:', this.client.address);
       return;
-    } catch (error: any) {
-      const msg = String(error?.message ?? '');
-      const isNetworkIssue =
-        error?.code === 14 ||
-        msg.includes('UNAVAILABLE') ||
-        msg.includes('network') ||
-        msg.includes('Failed to fetch') ||
-        msg.includes('timeout');
-
-      if (!isNetworkIssue) {
-        // Signature rejected or unrecoverable error
-        console.error('❌ XMTP init error:', error);
-        throw error;
+    } catch (fastErr: any) {
+      const msg = String(fastErr?.message ?? '');
+      const isAuth = !msg.includes('timeout') && !msg.includes('network')
+        && !msg.includes('UNAVAILABLE') && !msg.includes('Failed to fetch')
+        && fastErr?.code !== 14;
+      if (isAuth) {
+        // User rejected signature — propagate immediately
+        console.error('❌ XMTP auth error:', fastErr);
+        throw fastErr;
       }
-
-      console.warn('⚠️ XMTP production недоступен, пробуем dev:', msg);
+      console.warn('⚠️ XMTP fast path failed, trying full init:', msg);
     }
 
-    // Dev fallback — 4-second timeout
+    // Full init (publishes contact bundle — needed for new users or corrupted state)
+    // Timeout: 4s
     try {
-      this.client = await XMTPService._createWithTimeout(signer, { env: 'dev' }, 4000);
-      this._env = 'dev';
-      console.log('✅ XMTP [dev fallback]:', this.client.address);
-    } catch (devErr: any) {
-      console.warn('⚠️ XMTP dev также недоступен — работаем без XMTP:', devErr?.message);
-      throw devErr;
+      this.client = await XMTPService._createWithTimeout(signer, { env: 'production' }, 4000);
+      this._env = 'production';
+      console.log('✅ XMTP [production full]:', this.client.address);
+    } catch (fullErr: any) {
+      console.warn('⚠️ XMTP недоступен — работаем без E2E:', fullErr?.message);
+      throw fullErr;
     }
   }
 
