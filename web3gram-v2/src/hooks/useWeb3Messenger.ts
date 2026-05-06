@@ -205,13 +205,58 @@ export function useWeb3Messenger() {
     setError(null);
   }, []);
 
-  // ── Load XMTP conversations into store ────────────────────────────────────
+  // ── Build Chat entry from peer address ────────────────────────────────────
+  const _buildChat = useCallback(
+    (peerAddr: string, lastMessage?: Message, createdAt?: Date): Chat => {
+      const chatId = peerAddr.toLowerCase();
+      const shortAddr = `${peerAddr.slice(0, 6)}…${peerAddr.slice(-4)}`;
+      return {
+        id: chatId,
+        type: 'private',
+        name: shortAddr,
+        avatar: peerAddr.slice(2, 4).toUpperCase(),
+        participants: [{ id: peerAddr, name: shortAddr, walletAddress: peerAddr, isOnline: false }],
+        unreadCount: 0,
+        isPinned: false,
+        isMuted: false,
+        createdAt: createdAt || new Date(),
+        updatedAt: lastMessage?.timestamp || new Date(),
+        lastMessage,
+      };
+    },
+    []
+  );
+
+  // ── Load chats: on-chain discovery + XMTP conversations ──────────────────
+  //
+  // Стратегия (как в рабочем репо aliter230880/web3-messenger):
+  //   1. Сканируем события MessageSent в MessageStorage → находим всех собеседников
+  //      (работает для ЛЮБОГО Ethereum-адреса, без регистрации в XMTP)
+  //   2. Дополнительно загружаем XMTP-диалоги → последнее сообщение + дата
+  //   3. Объединяем: on-chain peers + xmtp peers → уникальный список чатов
   const loadChats = useCallback(async () => {
-    if (!xmtpService.isInitialized()) return;
     const store = useAppStore.getState();
+    const myAddress = store.wallet.address;
+    if (!myAddress) return;
 
     try {
       store.clearMockData();
+
+      // ── 1. On-chain peer discovery ─────────────────────────────────────
+      let onChainPeers: string[] = [];
+      try {
+        onChainPeers = await contractService.discoverChatPeers(myAddress);
+      } catch (e) {
+        console.warn('⚠️ discoverChatPeers failed:', e);
+      }
+
+      // Add discovered peers to store immediately (so they appear in list)
+      for (const peer of onChainPeers) {
+        store.upsertChat(_buildChat(peer));
+      }
+
+      // ── 2. XMTP conversations (if available) ──────────────────────────
+      if (!xmtpService.isInitialized()) return;
 
       const conversations = await xmtpService.getConversations();
       console.log('📬 XMTP диалогов:', conversations.length);
@@ -219,7 +264,6 @@ export function useWeb3Messenger() {
       for (const conv of conversations) {
         const peerAddr: string = (conv as any).peerAddress;
         const chatId = peerAddr.toLowerCase();
-        const shortAddr = `${peerAddr.slice(0, 6)}…${peerAddr.slice(-4)}`;
 
         let lastMessage: Message | undefined;
         try {
@@ -240,31 +284,12 @@ export function useWeb3Messenger() {
           }
         } catch (_) {}
 
-        const chat: Chat = {
-          id: chatId,
-          type: 'private',
-          name: shortAddr,
-          avatar: peerAddr.slice(2, 4).toUpperCase(),
-          participants: [{
-            id: peerAddr,
-            name: shortAddr,
-            walletAddress: peerAddr,
-            isOnline: false,
-          }],
-          unreadCount: 0,
-          isPinned: false,
-          isMuted: false,
-          createdAt: new Date((conv as any).createdAt || Date.now()),
-          updatedAt: lastMessage?.timestamp || new Date(),
-          lastMessage,
-        };
-
-        store.upsertChat(chat);
+        store.upsertChat(_buildChat(peerAddr, lastMessage, new Date((conv as any).createdAt || Date.now())));
       }
     } catch (e) {
       console.error('❌ loadChats:', e);
     }
-  }, []);
+  }, [_buildChat]);
 
   // ── Start new chat with a wallet address ─────────────────────────────────
   const startChat = useCallback((peerAddress: string): string => {
@@ -353,9 +378,11 @@ export function useWeb3Messenger() {
     return xmtpService.sendMessage(peerAddress, payload);
   }, []);
 
-  // ── Check if address can receive XMTP messages ────────────────────────────
-  const canMessage = useCallback(async (address: string): Promise<boolean> => {
-    return xmtpService.canMessage(address);
+  // ── Check if address can receive messages ────────────────────────────────
+  // Всегда возвращает true: собеседника находим по on-chain событиям (MessageStorage),
+  // для XMTP не нужна предварительная регистрация — отправим, дойдёт когда откроет.
+  const canMessage = useCallback(async (_address: string): Promise<boolean> => {
+    return true;
   }, []);
 
   const registerProfile = useCallback(async (nickname: string, avatarId: number) => {
