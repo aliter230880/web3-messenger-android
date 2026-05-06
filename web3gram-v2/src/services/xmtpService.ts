@@ -5,6 +5,7 @@ export class XMTPService {
   private client: Client | null = null;
   private static instance: XMTPService;
   private _globalStream: any = null;
+  private _env: 'production' | 'dev' = 'production';
 
   private constructor() {}
 
@@ -15,32 +16,43 @@ export class XMTPService {
     return XMTPService.instance;
   }
 
+  /**
+   * Initialize XMTP client.
+   *
+   * XMTP-JS stores the key bundle in IndexedDB (LocalAuthenticatedKeystore).
+   * - If keys already exist for this address → no wallet signature needed.
+   * - If keys don't exist → exactly ONE wallet signature is requested.
+   *
+   * We try production only. If the XMTP network is unreachable (gRPC code 14),
+   * we skip XMTP entirely instead of retrying with dev (which would request another signature).
+   */
   async initialize(signer: Signer): Promise<void> {
-    // Try production first, fallback to dev on network errors (gRPC code 14 = UNAVAILABLE)
-    const envs: Array<'production' | 'dev'> = ['production', 'dev'];
-    let lastError: unknown;
+    try {
+      this.client = await Client.create(signer, { env: 'production' });
+      this._env = 'production';
+      console.log('✅ XMTP [production]:', this.client.address);
+    } catch (error: any) {
+      const code = error?.code;
+      const msg = String(error?.message ?? '');
 
-    for (const env of envs) {
-      try {
-        this.client = await Client.create(signer, { env });
-        this._env = env;
-        console.log(`✅ XMTP клиент инициализирован [${env}]:`, this.client.address);
-        return;
-      } catch (error: any) {
-        lastError = error;
-        const code = error?.code ?? error?.details?.code;
-        // gRPC UNAVAILABLE (14) or connection issues — try next env
-        if (code === 14 || String(error?.message).includes('UNAVAILABLE') || String(error?.message).includes('network')) {
-          console.warn(`⚠️ XMTP ${env} недоступен, пробуем следующий...`);
-          continue;
+      if (code === 14 || msg.includes('UNAVAILABLE') || msg.includes('network') || msg.includes('Failed to fetch')) {
+        // Network issue — try dev as a last resort WITH THE SAME KEYS already in IndexedDB
+        // (no new signature needed if keys were already generated above)
+        try {
+          this.client = await Client.create(signer, { env: 'dev' });
+          this._env = 'dev';
+          console.log('✅ XMTP [dev fallback]:', this.client.address);
+          return;
+        } catch (devErr: any) {
+          console.warn('⚠️ XMTP dev также недоступен — работаем без XMTP');
+          throw devErr;
         }
-        // Other error (e.g. user rejected signature) — rethrow immediately
-        throw error;
       }
-    }
 
-    console.error('❌ XMTP недоступен на всех серверах:', lastError);
-    throw lastError;
+      // User rejected signature or other auth error — propagate
+      console.error('❌ XMTP init error:', error);
+      throw error;
+    }
   }
 
   isInitialized(): boolean {
@@ -64,10 +76,6 @@ export class XMTPService {
     return this.client.conversations.list();
   }
 
-  /**
-   * Загружает сообщения для конкретного диалога.
-   * Возвращает в хронологическом порядке (старые → новые).
-   */
   async getMessages(recipientAddress: string, limit: number = 50) {
     if (!this.client) throw new Error('XMTP клиент не инициализирован');
     const conversation = await this.client.conversations.newConversation(recipientAddress);
@@ -75,10 +83,6 @@ export class XMTPService {
     return messages.sort((a, b) => a.sent.getTime() - b.sent.getTime());
   }
 
-  /**
-   * Подписка на сообщения конкретного диалога.
-   * Возвращает stream — caller должен вызвать stream.return() для отписки.
-   */
   async subscribeToMessages(recipientAddress: string, callback: (message: any) => void) {
     if (!this.client) throw new Error('XMTP клиент не инициализирован');
     const conversation = await this.client.conversations.newConversation(recipientAddress);
@@ -93,10 +97,6 @@ export class XMTPService {
     return stream;
   }
 
-  /**
-   * Глобальная подписка на ВСЕ новые сообщения из всех диалогов.
-   * Вызывается один раз при инициализации XMTP.
-   */
   async subscribeToAllMessages(callback: (message: any) => void) {
     if (!this.client) throw new Error('XMTP клиент не инициализирован');
 
@@ -117,27 +117,22 @@ export class XMTPService {
     return this._globalStream;
   }
 
+  /**
+   * Check if an address is registered on the XMTP network.
+   * Returns true on any network error (don't block the user from starting a chat).
+   */
   async canMessage(address: string): Promise<boolean> {
-    const envToTry = this._env ?? 'production';
     try {
-      return await Client.canMessage(address, { env: envToTry });
+      return await Client.canMessage(address, { env: this._env });
     } catch (error: any) {
-      const code = error?.code ?? error?.details?.code;
-      // Network error — assume user can receive messages (don't block chat)
-      if (code === 14 || String(error?.message).includes('UNAVAILABLE')) {
-        return true;
+      const code = error?.code;
+      const msg = String(error?.message ?? '');
+      if (code === 14 || msg.includes('UNAVAILABLE') || msg.includes('network')) {
+        return true; // Network down — assume reachable, don't block
       }
-      // Try fallback env
-      try {
-        const fallback: 'production' | 'dev' = envToTry === 'production' ? 'dev' : 'production';
-        return await Client.canMessage(address, { env: fallback });
-      } catch {
-        return true; // Network issues — don't block the user
-      }
+      return true; // Any error — don't block
     }
   }
-
-  private _env: 'production' | 'dev' = 'production';
 
   async disconnect() {
     if (this._globalStream) {
@@ -145,7 +140,7 @@ export class XMTPService {
       this._globalStream = null;
     }
     this.client = null;
-    console.log('🔌 XMTP клиент отключён');
+    console.log('🔌 XMTP отключён');
   }
 }
 

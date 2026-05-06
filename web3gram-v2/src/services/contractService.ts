@@ -186,20 +186,28 @@ export class ContractService {
       throw new Error('LoginFactory не инициализирован — сначала вызовите initialize()');
     }
 
+    // ── Cache check: if smart wallet is already known, skip all RPC calls ──
+    const cacheKey = `smart_wallet_${signerAddress.toLowerCase()}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      console.log('✅ Смарт-кошелёк из кэша:', cached);
+      return { signerAddress, smartWalletAddress: cached, alreadyRegistered: true };
+    }
+
     const factory = this.loginFactoryContract;
     const EMPTY_DATA = '0x';
 
-    // Step 1: predict smart-wallet address (pure view, no gas)
+    // Step 1: predict smart-wallet address (pure view, no gas, no signature)
     let smartWalletAddress: string;
     try {
       smartWalletAddress = await factory.getAddress(signerAddress, EMPTY_DATA);
     } catch (err: any) {
       console.warn('⚠️ LoginFactory.getAddress failed, using signer as identity:', err.message);
-      // Fallback: use EOA directly — don't block login
+      localStorage.setItem(cacheKey, signerAddress);
       return { signerAddress, smartWalletAddress: signerAddress, alreadyRegistered: true };
     }
 
-    // Step 2: check if already deployed (view, no gas)
+    // Step 2: check if already deployed (view, no gas, no signature)
     let alreadyRegistered = false;
     try {
       alreadyRegistered = await factory.isRegistered(smartWalletAddress);
@@ -207,25 +215,26 @@ export class ContractService {
       console.warn('⚠️ LoginFactory.isRegistered failed:', err.message);
     }
 
-    // Step 3: deploy smart wallet if needed
-    if (!alreadyRegistered) {
-      console.log('🔨 Создаём смарт-кошелёк на Polygon через LoginFactory…');
-      try {
-        const tx = await factory.createAccount(signerAddress, EMPTY_DATA);
-        const receipt = await tx.wait();
-        console.log('✅ Смарт-кошелёк создан:', smartWalletAddress, 'tx:', receipt.transactionHash);
-        alreadyRegistered = false; // was just created
-      } catch (err: any) {
-        // If createAccount reverts with "already exists" style error, the wallet
-        // was likely deployed in the same block — treat as registered.
-        console.warn('⚠️ createAccount error (may already exist):', err.message);
-        alreadyRegistered = true;
-      }
-    } else {
+    if (alreadyRegistered) {
       console.log('✅ Смарт-кошелёк уже зарегистрирован:', smartWalletAddress);
+      localStorage.setItem(cacheKey, smartWalletAddress);
+      return { signerAddress, smartWalletAddress, alreadyRegistered: true };
     }
 
-    return { signerAddress, smartWalletAddress, alreadyRegistered };
+    // Step 3: deploy smart wallet — ONE blockchain transaction (requires MATIC gas + 1 approval)
+    console.log('🔨 Создаём смарт-кошелёк на Polygon…');
+    try {
+      const tx = await factory.createAccount(signerAddress, EMPTY_DATA);
+      const receipt = await tx.wait();
+      console.log('✅ Смарт-кошелёк создан:', smartWalletAddress, 'tx:', receipt.transactionHash);
+      localStorage.setItem(cacheKey, smartWalletAddress);
+    } catch (err: any) {
+      console.warn('⚠️ createAccount error (may already exist):', err.message);
+      // Cache anyway to avoid retrying on next login
+      localStorage.setItem(cacheKey, smartWalletAddress);
+    }
+
+    return { signerAddress, smartWalletAddress, alreadyRegistered: false };
   }
 
   /**
