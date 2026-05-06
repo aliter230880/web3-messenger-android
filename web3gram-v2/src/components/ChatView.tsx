@@ -28,7 +28,7 @@ function getAvatarGradient(name: string) {
 
 export function ChatView({ chatId, onBack }: ChatViewProps) {
   const { chats, messages, addMessage, updateMessageStatus, currentUser, setMessages } = useAppStore();
-  const { sendMessage, loadMessages, isE2EInitialized } = useWeb3Messenger();
+  const { sendMessage, loadMessages, isE2EInitialized, isConnected } = useWeb3Messenger();
   const [inputValue, setInputValue] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,7 +48,7 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
 
   // ── Load history when chat opens ──────────────────────────────────────────
   useEffect(() => {
-    if (!chat || !isE2EInitialized || !xmtpService.isInitialized()) {
+    if (!chat || !isConnected || !xmtpService.isInitialized()) {
       setIsLoading(false);
       return;
     }
@@ -67,11 +67,11 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
     })();
 
     return () => { cancelled = true; };
-  }, [chatId, isE2EInitialized]);
+  }, [chatId, isConnected]);
 
   // ── Subscribe to real-time messages for this chat ─────────────────────────
   useEffect(() => {
-    if (!isE2EInitialized || !xmtpService.isInitialized()) return;
+    if (!isConnected || !xmtpService.isInitialized()) return;
 
     (async () => {
       try {
@@ -103,7 +103,7 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
         streamRef.current = null;
       }
     };
-  }, [chatId, isE2EInitialized]);
+  }, [chatId, isConnected]);
 
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -128,7 +128,7 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
     setIsSending(true);
 
     try {
-      if (isE2EInitialized && xmtpService.isInitialized()) {
+      if (xmtpService.isInitialized()) {
         const sentId = await sendMessage(peerAddress, text);
         // Replace temp message with real one
         const store = useAppStore.getState();
@@ -182,7 +182,7 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{chat.name}</h3>
             <p className="text-xs text-gray-500 truncate">
-              {isE2EInitialized ? (
+              {isConnected ? (
                 chat.participants[0]?.isOnline ? 'в сети' : peerAddress
               ) : (
                 'Подключи кошелёк для отправки сообщений'
@@ -302,11 +302,11 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           <input
             ref={inputRef}
             type="text"
-            placeholder={isE2EInitialized ? 'Сообщение' : 'Подключи кошелёк...'}
+            placeholder={isConnected ? 'Сообщение' : 'Подключи кошелёк...'}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
-            disabled={!isE2EInitialized}
+            disabled={!isConnected}
             className="flex-1 bg-transparent outline-none text-gray-900 dark:text-white placeholder-gray-500 text-[16px] max-h-24 min-w-0 disabled:opacity-50"
           />
           <button
