@@ -125,13 +125,6 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isSending) return;
 
-    // If XMTP isn't ready yet, warn the user and wait
-    if (!xmtpService.isInitialized()) {
-      setXmtpWarn(true);
-      setTimeout(() => setXmtpWarn(false), 3000);
-      return;
-    }
-
     const text   = inputValue.trim();
     const tempId = `temp-${Date.now()}`;
 
@@ -150,6 +143,15 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
     setShowEmoji(false);
     setIsSending(true);
 
+    if (!xmtpService.isInitialized()) {
+      // XMTP unavailable — save locally only, warn user
+      updateMessageStatus(chatId, tempId, 'sent');
+      setIsSending(false);
+      setXmtpWarn(true);
+      setTimeout(() => setXmtpWarn(false), 4000);
+      return;
+    }
+
     try {
       // sendMessage goes through XMTP — E2E encrypted, reaches recipient
       const sentId = await sendMessage(peerAddress, text);
@@ -162,7 +164,6 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
       ));
     } catch (e: any) {
       console.error('❌ send error:', e);
-      // Keep the message visible but mark as failed
       updateMessageStatus(chatId, tempId, 'sent');
     } finally {
       setIsSending(false);
