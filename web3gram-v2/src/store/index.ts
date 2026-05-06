@@ -17,6 +17,7 @@ interface AppState {
   setCurrentUser: (user: User | null) => void;
   toggleDarkMode: () => void;
   setE2EInitialized: (initialized: boolean) => void;
+  setXmtpReady: (ready: boolean) => void;
   setWallet: (wallet: WalletState) => void;
   toggleAvatarSelector: () => void;
   setAvatar: (avatarId: number) => void;
@@ -25,6 +26,7 @@ interface AppState {
   setActiveChat: (chatId: string | null) => void;
   addMessage: (chatId: string, message: Message) => void;
   setMessages: (chatId: string, messages: Message[]) => void;
+  loadPersistedMessages: (chatId: string) => Message[];
   clearMockData: () => void;
   updateMessageStatus: (chatId: string, messageId: string, status: Message['status']) => void;
   setSearchQuery: (query: string) => void;
@@ -36,6 +38,7 @@ interface AppState {
   deleteChat: (chatId: string) => void;
 }
 
+// ── localStorage helpers ──────────────────────────────────────────────────
 function _ls(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -46,9 +49,12 @@ function _lsDel(key: string) {
   try { localStorage.removeItem(key); } catch {}
 }
 
-// ── Chat persistence helpers (per wallet address) ─────────────────────────
+// ── Chat persistence (keyed by wallet address) ────────────────────────────
 function chatsKey(address: string) {
   return `w3g_chats_${address.toLowerCase()}`;
+}
+function msgsKey(chatId: string) {
+  return `w3g_msgs_${chatId.toLowerCase()}`;
 }
 
 function loadSavedChats(address: string | null): Chat[] {
@@ -73,12 +79,26 @@ function loadSavedChats(address: string | null): Chat[] {
 function persistChats(address: string | null, chats: Chat[]) {
   if (!address) return;
   const real = chats.filter((c) => !c.id.startsWith('mock-'));
-  try {
-    _lsSet(chatsKey(address), JSON.stringify(real));
-  } catch {}
+  try { _lsSet(chatsKey(address), JSON.stringify(real)); } catch {}
 }
 
-// ── Initial values from localStorage ─────────────────────────────────────
+function persistMessages(chatId: string, messages: Message[]) {
+  if (!chatId || chatId.startsWith('mock-')) return;
+  const last100 = messages.slice(-100);
+  try { _lsSet(msgsKey(chatId), JSON.stringify(last100)); } catch {}
+}
+
+function _loadPersistedMsgs(chatId: string): Message[] {
+  if (!chatId || chatId.startsWith('mock-')) return [];
+  try {
+    const raw = _ls(msgsKey(chatId));
+    if (!raw) return [];
+    const parsed: any[] = JSON.parse(raw);
+    return parsed.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+  } catch { return []; }
+}
+
+// ── Bootstrap from localStorage ────────────────────────────────────────────
 const savedName     = _ls('w3g_name');
 const savedAvatarId = _ls('w3g_avatarId');
 const savedAddress  = _ls('w3g_address');
@@ -88,31 +108,32 @@ if (typeof document !== 'undefined') {
   document.documentElement.classList.toggle('dark', isDark);
 }
 
-// ── Mock data (shown only when no wallet connected) ───────────────────────
-const mockUsers: User[] = [
-  { id: '1', name: 'Алексей Петров', avatar: 'AP', walletAddress: '0x742d35Cc6634C0532925a3b8D4C9C4e07B7A5c8f', isOnline: true },
-];
-
+// ── Mock data (only shown when no wallet is connected) ────────────────────
 const mockChats: Chat[] = [
   {
-    id: 'mock-1', type: 'private', name: 'Алексей Петров', avatar: 'AP',
-    participants: [mockUsers[0]], unreadCount: 2, isPinned: true, isMuted: false,
-    createdAt: new Date(Date.now() - 86400000), updatedAt: new Date(),
-    lastMessage: { id: 'm1', chatId: 'mock-1', senderId: '1', content: 'Привет! Подключи кошелёк для реального чата', timestamp: new Date(), status: 'delivered', type: 'text' },
+    id: 'mock-1',
+    type: 'private',
+    name: 'Демо-чат',
+    avatar: 'DM',
+    participants: [{ id: '1', name: 'Демо', walletAddress: '0x0', isOnline: false }],
+    unreadCount: 1,
+    isPinned: false,
+    isMuted: false,
+    createdAt: new Date(Date.now() - 86400000),
+    updatedAt: new Date(),
+    lastMessage: {
+      id: 'm1',
+      chatId: 'mock-1',
+      senderId: '1',
+      content: 'Подключи кошелёк для реального чата',
+      timestamp: new Date(),
+      status: 'delivered',
+      type: 'text',
+    },
   },
 ];
 
-const mockMessages: Record<string, Message[]> = {
-  'mock-1': [
-    { id: 'm1-1', chatId: 'mock-1', senderId: '1', content: 'Привет!', timestamp: new Date(Date.now() - 7200000), status: 'read', type: 'text' },
-    { id: 'm1-2', chatId: 'mock-1', senderId: 'current', content: 'Это демо-режим. Подключи кошелёк чтобы начать реальный чат.', timestamp: new Date(Date.now() - 7100000), status: 'read', type: 'text' },
-    { id: 'm1-3', chatId: 'mock-1', senderId: '1', content: 'Подключи кошелёк для реального чата', timestamp: new Date(), status: 'delivered', type: 'text' },
-  ],
-};
-
 // ── Initial state ─────────────────────────────────────────────────────────
-// Если адрес сохранён → показываем сохранённые реальные чаты (или пустой список)
-// Если нет → показываем демо-чат
 const _initChats = loadSavedChats(savedAddress);
 
 const _initUser: User = {
@@ -120,7 +141,7 @@ const _initUser: User = {
   name: savedName || 'Пользователь',
   avatar: savedName ? savedName.charAt(0).toUpperCase() : 'П',
   avatarId: savedAvatarId ? parseInt(savedAvatarId, 10) : undefined,
-  walletAddress: savedAddress,
+  walletAddress: savedAddress ?? undefined,
   isOnline: true,
 };
 
@@ -128,8 +149,6 @@ const _initWallet: WalletState = savedAddress
   ? { isConnected: true, address: savedAddress, chainId: 137 }
   : { isConnected: false, address: null, chainId: null };
 
-// Если адрес сохранён в localStorage — считаем инициализированным
-// (полный auth flow запустится при следующем подключении, но UI разблокирован)
 const _initE2E: E2EState = {
   isInitialized: !!savedAddress,
   xmtpReady: false,
@@ -138,34 +157,37 @@ const _initE2E: E2EState = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: _initUser,
-  wallet: _initWallet,
-  chats: _initChats,
+  wallet:      _initWallet,
+  chats:       _initChats,
   activeChatId: null,
-  messages: {},
+  messages:    {},
   searchQuery: '',
-  isSettingsOpen: false,
+  isSettingsOpen:   false,
   isWalletModalOpen: false,
-  isDarkMode: isDark,
+  isDarkMode:  isDark,
   isAvatarSelectorOpen: false,
   e2e: _initE2E,
 
   setCurrentUser: (user) => {
     set({ currentUser: user });
     if (user) {
-      if (user.name)          _lsSet('w3g_name', user.name);
-      if (user.walletAddress) _lsSet('w3g_address', user.walletAddress);
+      if (user.name)           _lsSet('w3g_name', user.name);
+      if (user.walletAddress)  _lsSet('w3g_address', user.walletAddress);
       if (user.avatarId !== undefined) _lsSet('w3g_avatarId', String(user.avatarId));
     }
   },
 
   setE2EInitialized: (initialized) =>
-    set((state) => ({ e2e: { ...state.e2e, isInitialized: initialized } })),
+    set((s) => ({ e2e: { ...s.e2e, isInitialized: initialized } })),
+
+  setXmtpReady: (ready) =>
+    set((s) => ({ e2e: { ...s.e2e, xmtpReady: ready } })),
 
   setWallet: (wallet) => {
     set({ wallet });
     if (wallet.address) {
       _lsSet('w3g_address', wallet.address);
-      // При смене адреса — подгружаем сохранённые чаты для этого адреса
+      // If switching to a new address load its saved chats
       const { chats } = get();
       const hasReal = chats.some((c) => !c.id.startsWith('mock-'));
       if (!hasReal) {
@@ -174,8 +196,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } else {
       _lsDel('w3g_address');
-      // При отключении — показываем демо-чат
-      set({ chats: mockChats, messages: mockMessages, activeChatId: null });
+      set({ chats: mockChats, messages: {}, activeChatId: null, e2e: { isInitialized: false, xmtpReady: false, contractsReady: false } });
     }
   },
 
@@ -187,12 +208,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   toggleAvatarSelector: () =>
-    set((state) => ({ isAvatarSelectorOpen: !state.isAvatarSelectorOpen })),
+    set((s) => ({ isAvatarSelectorOpen: !s.isAvatarSelectorOpen })),
 
   setAvatar: (avatarId) => {
     const { currentUser } = get();
     if (currentUser) {
-      set({ currentUser: { ...currentUser, avatar: undefined, avatarId } });
+      set({ currentUser: { ...currentUser, avatarId } });
       _lsSet('w3g_avatarId', String(avatarId));
     }
   },
@@ -216,18 +237,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     persistChats(wallet.address, updated);
   },
 
-  setMessages: (chatId, msgs) =>
-    set((state) => ({ messages: { ...state.messages, [chatId]: msgs } })),
+  setMessages: (chatId, msgs) => {
+    set((s) => ({ messages: { ...s.messages, [chatId]: msgs } }));
+    persistMessages(chatId, msgs);
+  },
 
-  // Убираем только mock-чаты, реальные контакты остаются
+  loadPersistedMessages: (chatId) => _loadPersistedMsgs(chatId),
+
+  // Только mock- чаты удаляем; реальные остаются
   clearMockData: () => {
-    const { chats, messages } = get();
+    const { chats, messages, wallet } = get();
     const realChats = chats.filter((c) => !c.id.startsWith('mock-'));
     const realMessages: Record<string, Message[]> = {};
     Object.keys(messages).forEach((k) => {
       if (!k.startsWith('mock-')) realMessages[k] = messages[k];
     });
     set({ chats: realChats, messages: realMessages });
+    persistChats(wallet.address, realChats);
   },
 
   setActiveChat: (chatId) => {
@@ -239,12 +265,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { messages, chats } = get();
     const existing = messages[chatId] || [];
     if (existing.some((m) => m.id === message.id)) return;
+    const updated = [...existing, message];
     set({
-      messages: { ...messages, [chatId]: [...existing, message] },
+      messages: { ...messages, [chatId]: updated },
       chats: chats.map((chat) =>
-        chat.id === chatId ? { ...chat, lastMessage: message, updatedAt: message.timestamp } : chat
+        chat.id === chatId
+          ? { ...chat, lastMessage: message, updatedAt: message.timestamp }
+          : chat
       ),
     });
+    persistMessages(chatId, updated);
   },
 
   updateMessageStatus: (chatId, messageId, status) => {
@@ -260,40 +290,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setSearchQuery: (query) => set({ searchQuery: query }),
-  toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
-  toggleWalletModal: () => set((state) => ({ isWalletModalOpen: !state.isWalletModalOpen })),
+  toggleSettings: () => set((s) => ({ isSettingsOpen: !s.isSettingsOpen })),
+  toggleWalletModal: () => set((s) => ({ isWalletModalOpen: !s.isWalletModalOpen })),
 
   markChatAsRead: (chatId) =>
-    set((state) => ({
-      chats: state.chats.map((chat) =>
-        chat.id === chatId ? { ...chat, unreadCount: 0 } : chat
-      ),
+    set((s) => ({
+      chats: s.chats.map((c) => c.id === chatId ? { ...c, unreadCount: 0 } : c),
     })),
 
   pinChat: (chatId) =>
-    set((state) => ({
-      chats: state.chats.map((chat) =>
-        chat.id === chatId ? { ...chat, isPinned: !chat.isPinned } : chat
-      ),
+    set((s) => ({
+      chats: s.chats.map((c) => c.id === chatId ? { ...c, isPinned: !c.isPinned } : c),
     })),
 
   muteChat: (chatId) =>
-    set((state) => ({
-      chats: state.chats.map((chat) =>
-        chat.id === chatId ? { ...chat, isMuted: !chat.isMuted } : chat
-      ),
+    set((s) => ({
+      chats: s.chats.map((c) => c.id === chatId ? { ...c, isMuted: !c.isMuted } : c),
     })),
 
   deleteChat: (chatId) => {
     const { chats, messages, activeChatId, wallet } = get();
     const newMessages = { ...messages };
     delete newMessages[chatId];
-    const newChats = chats.filter((chat) => chat.id !== chatId);
-    set({
-      chats: newChats,
-      messages: newMessages,
-      activeChatId: activeChatId === chatId ? null : activeChatId,
-    });
+    const newChats = chats.filter((c) => c.id !== chatId);
+    set({ chats: newChats, messages: newMessages, activeChatId: activeChatId === chatId ? null : activeChatId });
     persistChats(wallet.address, newChats);
+    _lsDel(msgsKey(chatId));
   },
 }));
