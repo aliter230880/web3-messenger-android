@@ -8,79 +8,71 @@ import { encryptionService } from '../services/encryptionService';
 import type { Chat, Message } from '../types';
 
 export function useWeb3Messenger() {
-  const { setWallet, setE2EInitialized, setCurrentUser } = useAppStore();
-  const isConnected = useAppStore((s) => s.wallet.isConnected);
-  const address = useAppStore((s) => s.wallet.address);
+  const { setWallet, setE2EInitialized, setXmtpReady, setCurrentUser } = useAppStore();
+  const isConnected    = useAppStore((s) => s.wallet.isConnected);
+  const address        = useAppStore((s) => s.wallet.address);
   const isE2EInitialized = useAppStore((s) => s.e2e.isInitialized);
+  const xmtpReady      = useAppStore((s) => s.e2e.xmtpReady);
 
   const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]       = useState<string | null>(null);
 
-  // ── Finish any wallet connection that has a real signer ──────────────────
+  // ── _finishConnect: FAST PATH ────────────────────────────────────────────
+  //
+  // Стратегия (как в рабочем репо — минимум блокирующих вызовов):
+  //
+  //   1. Сразу показываем кошелёк как "подключён" → UI разблокируется мгновенно
+  //   2. authService.authenticate() → instant (localStorage seed, без подписи)
+  //   3. XMTP.init() → background (может попросить 1 подпись при первом входе)
+  //      При успехе → setXmtpReady(true) → App.tsx запустит global stream
+  //   4. contractService.initialize() → instant (создаёт объекты контрактов)
+  //   5. loginWithFactory → полностью убран из hot path (медленный, требует RPC)
+  //
   const _finishConnect = useCallback(
     async (connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>) => {
       const { provider, signer, address: addr, walletType } = connection;
 
-      const existingUser = useAppStore.getState().currentUser;
-      const savedName    = existingUser?.name && existingUser.name !== 'Пользователь' ? existingUser.name : null;
+      const existingUser  = useAppStore.getState().currentUser;
+      const savedName     = existingUser?.name && existingUser.name !== 'Пользователь' ? existingUser.name : null;
       const savedAvatarId = existingUser?.avatarId;
 
-      if (!signer) {
-        setWallet({ isConnected: true, address: addr, chainId: 137, signer: null as any, provider: null as any });
-        setE2EInitialized(false);
-        setCurrentUser({
-          id: addr,
-          name: savedName || addr.slice(0, 8) + '…',
-          avatarId: savedAvatarId,
-          walletAddress: addr,
-          isOnline: true,
-        });
-        return;
-      }
-
-      const authData = await authService.authenticate(signer);
-
-      try {
-        // No timeout here — Client.create() needs a wallet signature
-        // which requires user interaction; cutting it off means keys never register
-        await xmtpService.initialize(signer);
-      } catch (e) {
-        console.warn('⚠️ XMTP (skipped):', e);
-      }
-
-      let smartWalletAddress = addr;
-      try {
-        contractService.initialize(provider!, signer);
-        const loginResult = await Promise.race([
-          contractService.loginWithFactory(addr),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('LoginFactory timeout')), 12_000)
-          ),
-        ]);
-        smartWalletAddress = loginResult.smartWalletAddress;
-        if (!loginResult.alreadyRegistered) {
-          console.log('🆕 Смарт-кошелёк создан на Polygon:', smartWalletAddress);
-        } else {
-          console.log('✅ Смарт-кошелёк найден:', smartWalletAddress);
-        }
-      } catch (e) {
-        console.warn('⚠️ Контракты/LoginFactory (skipped):', e);
-      }
-
-      setWallet({ isConnected: true, address: addr, chainId: 137, signer, provider });
+      // ── STEP 1: Мгновенно обновляем store ─────────────────────────────
+      setWallet({ isConnected: true, address: addr, chainId: 137, signer: signer as any, provider: provider as any });
       setE2EInitialized(true);
       setCurrentUser({
         id: addr,
-        name: savedName || authData.address,
+        name: savedName || `${addr.slice(0, 6)}…${addr.slice(-4)}`,
         avatarId: savedAvatarId,
         walletAddress: addr,
-        smartWalletAddress,
         isOnline: true,
       });
 
-      console.log(`✅ Подключено через ${walletType}:`, addr);
+      console.log(`✅ [${walletType}] кошелёк подключён:`, addr);
+
+      if (!signer) return;
+
+      // ── STEP 2: Auth (мгновенно — только localStorage) ───────────────
+      authService.authenticate(signer).catch((e) => console.warn('⚠️ auth:', e));
+
+      // ── STEP 3: Contracts (создание объектов, без RPC) ────────────────
+      if (provider) {
+        contractService.initialize(provider, signer);
+      }
+
+      // ── STEP 4: XMTP — background, не блокирует UI ───────────────────
+      // При первом подключении: 1 подпись MetaMask
+      // При повторном: ключи из IndexedDB, без подписи
+      xmtpService.initialize(signer)
+        .then(() => {
+          console.log('✅ XMTP ready in background');
+          setXmtpReady(true);
+        })
+        .catch((e) => {
+          console.warn('⚠️ XMTP (skipped):', e);
+          // Не блокируем — работаем без E2E шифрования
+        });
     },
-    [setWallet, setE2EInitialized, setCurrentUser]
+    [setWallet, setE2EInitialized, setXmtpReady, setCurrentUser]
   );
 
   // ── Standard wallet connect ───────────────────────────────────────────────
@@ -193,11 +185,12 @@ export function useWeb3Messenger() {
       authService.logout();
       setWallet({ isConnected: false, address: null, chainId: null });
       setE2EInitialized(false);
+      setXmtpReady(false);
       setCurrentUser(null);
     } catch (err) {
       console.error('❌ Ошибка отключения:', err);
     }
-  }, [setWallet, setE2EInitialized, setCurrentUser]);
+  }, [setWallet, setE2EInitialized, setXmtpReady, setCurrentUser]);
 
   const cancelConnect = useCallback(async () => {
     try { await walletService.cancelConnect(); } catch (_) {}
@@ -208,7 +201,7 @@ export function useWeb3Messenger() {
   // ── Build Chat entry from peer address ────────────────────────────────────
   const _buildChat = useCallback(
     (peerAddr: string, lastMessage?: Message, createdAt?: Date): Chat => {
-      const chatId = peerAddr.toLowerCase();
+      const chatId    = peerAddr.toLowerCase();
       const shortAddr = `${peerAddr.slice(0, 6)}…${peerAddr.slice(-4)}`;
       return {
         id: chatId,
@@ -228,12 +221,6 @@ export function useWeb3Messenger() {
   );
 
   // ── Load chats: on-chain discovery + XMTP conversations ──────────────────
-  //
-  // Стратегия (как в рабочем репо aliter230880/web3-messenger):
-  //   1. Сканируем события MessageSent в MessageStorage → находим всех собеседников
-  //      (работает для ЛЮБОГО Ethereum-адреса, без регистрации в XMTP)
-  //   2. Дополнительно загружаем XMTP-диалоги → последнее сообщение + дата
-  //   3. Объединяем: on-chain peers + xmtp peers → уникальный список чатов
   const loadChats = useCallback(async () => {
     const store = useAppStore.getState();
     const myAddress = store.wallet.address;
@@ -250,7 +237,6 @@ export function useWeb3Messenger() {
         console.warn('⚠️ discoverChatPeers failed:', e);
       }
 
-      // Add discovered peers to store immediately (so they appear in list)
       for (const peer of onChainPeers) {
         store.upsertChat(_buildChat(peer));
       }
@@ -293,8 +279,8 @@ export function useWeb3Messenger() {
 
   // ── Start new chat with a wallet address ─────────────────────────────────
   const startChat = useCallback((peerAddress: string): string => {
-    const store = useAppStore.getState();
-    const chatId = peerAddress.toLowerCase();
+    const store   = useAppStore.getState();
+    const chatId  = peerAddress.toLowerCase();
     const shortAddr = `${peerAddress.slice(0, 6)}…${peerAddress.slice(-4)}`;
 
     const existingChat = store.chats.find((c) => c.id === chatId);
@@ -317,14 +303,22 @@ export function useWeb3Messenger() {
         updatedAt: new Date(),
       };
       store.upsertChat(newChat);
+      console.log('💾 Новый чат сохранён:', chatId);
     }
     return chatId;
   }, []);
 
-  // ── Load messages for a specific chat into store ──────────────────────────
+  // ── Load messages for a specific chat ─────────────────────────────────────
   const loadMessages = useCallback(async (peerAddress: string, chatId: string): Promise<Message[]> => {
-    if (!xmtpService.isInitialized()) return [];
+    // Сначала — из localStorage (мгновенно)
     const store = useAppStore.getState();
+    const cached = store.loadPersistedMessages(chatId);
+    if (cached.length > 0) {
+      store.setMessages(chatId, cached);
+    }
+
+    // Потом — из XMTP (если доступен)
+    if (!xmtpService.isInitialized()) return cached;
 
     const rawMessages = await xmtpService.getMessages(peerAddress, 50);
     const myAddress = store.wallet.address?.toLowerCase();
@@ -333,10 +327,9 @@ export function useWeb3Messenger() {
       rawMessages.map(async (msg: any): Promise<Message> => {
         let content = typeof msg.content === 'string' ? msg.content : '[media]';
 
-        // Try custom E2E decrypt if prefixed with 'v1:'
         if (content.startsWith('v1:')) {
           try {
-            const senderAddr = msg.senderAddress;
+            const senderAddr   = msg.senderAddress;
             const peerForDecrypt = msg.senderAddress.toLowerCase() === myAddress
               ? peerAddress
               : senderAddr;
@@ -366,21 +359,16 @@ export function useWeb3Messenger() {
   const sendMessage = useCallback(async (peerAddress: string, content: string): Promise<string> => {
     if (!xmtpService.isInitialized()) throw new Error('XMTP не инициализирован');
 
-    // Try custom E2E encrypt (XMTP already encrypts at protocol level, this is extra)
     let payload = content;
     try {
       const encrypted = await encryptionService.encrypt(content, peerAddress);
       payload = 'v1:' + encrypted.base64;
-    } catch (_) {
-      // Fallback to plain text (XMTP still encrypts it via protocol)
-    }
+    } catch (_) {}
 
     return xmtpService.sendMessage(peerAddress, payload);
   }, []);
 
-  // ── Check if address can receive messages ────────────────────────────────
-  // Всегда возвращает true: собеседника находим по on-chain событиям (MessageStorage),
-  // для XMTP не нужна предварительная регистрация — отправим, дойдёт когда откроет.
+  // ── canMessage ────────────────────────────────────────────────────────────
   const canMessage = useCallback(async (_address: string): Promise<boolean> => {
     return true;
   }, []);
@@ -388,7 +376,7 @@ export function useWeb3Messenger() {
   const registerProfile = useCallback(async (nickname: string, avatarId: number) => {
     try {
       const txHash = await contractService.registerProfile(nickname, avatarId);
-      const store = useAppStore.getState();
+      const store  = useAppStore.getState();
       if (store.currentUser) {
         store.setCurrentUser({ ...store.currentUser, name: nickname, avatarId });
       }
@@ -419,7 +407,8 @@ export function useWeb3Messenger() {
     isConnected,
     address,
     isE2EInitialized,
-    isMobile: walletService.isMobile(),
+    xmtpReady,
+    isMobile:    walletService.isMobile(),
     hasMetaMask: walletService.hasMetaMask(),
     isCapacitor: walletService.isCapacitor(),
   };
