@@ -23,7 +23,7 @@ export default function App() {
   const {
     isConnecting, isConnected, address,
     connectAliTerra, loadChats,
-    isE2EInitialized, xmtpReady,
+    isE2EInitialized, xmtpReady, xmtpAvailable, retryXmtp,
   } = useWeb3Messenger();
 
   const [showMobileList, setShowMobileList] = useState(true);
@@ -41,22 +41,19 @@ export default function App() {
   }, []);
 
   // ── Trigger 1: Load chats as soon as wallet is connected ─────────────────
-  // Runs immediately — does NOT wait for XMTP to be ready.
-  // clearMockData() + on-chain peer discovery work without XMTP.
   useEffect(() => {
     if (!isConnected) return;
     loadChats();
   }, [isConnected]);
 
-  // ── Trigger 2: Start global XMTP stream once XMTP is ready ───────────────
-  // XMTP inits in background after wallet connect; xmtpReady flips to true then.
+  // ── Trigger 2: Start global XMTP stream once XMTP is available ───────────
+  // xmtpAvailable = XMTP actually connected (not just "attempt done")
   useEffect(() => {
-    if (!xmtpReady || !xmtpService.isInitialized()) return;
+    if (!xmtpAvailable || !xmtpService.isInitialized()) return;
 
     let cancelled = false;
 
     (async () => {
-      // Re-load chats to pick up XMTP conversations now that client is ready
       await loadChats();
       if (cancelled) return;
 
@@ -68,34 +65,34 @@ export default function App() {
 
           if (senderAddr.toLowerCase() === myAddr) return;
 
-          const chatId        = senderAddr.toLowerCase();
-          const rawContent    = typeof msg.content === 'string' ? msg.content : '[media]';
+          const chatId         = senderAddr.toLowerCase();
+          const rawContent     = typeof msg.content === 'string' ? msg.content : '[media]';
           const displayContent = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
 
           const newMsg: Message = {
-            id: msg.id,
+            id:        msg.id,
             chatId,
-            senderId: senderAddr.toLowerCase(),
-            content: displayContent,
+            senderId:  senderAddr.toLowerCase(),
+            content:   displayContent,
             timestamp: msg.sent,
-            status: 'delivered',
-            type: 'text',
+            status:    'delivered',
+            type:      'text',
           };
 
           if (!store.chats.find((c) => c.id === chatId)) {
             const shortAddr = `${senderAddr.slice(0, 6)}…${senderAddr.slice(-4)}`;
             store.upsertChat({
-              id: chatId,
-              type: 'private',
-              name: shortAddr,
-              avatar: senderAddr.slice(2, 4).toUpperCase(),
+              id:           chatId,
+              type:         'private',
+              name:         shortAddr,
+              avatar:       senderAddr.slice(2, 4).toUpperCase(),
               participants: [{ id: senderAddr, name: shortAddr, walletAddress: senderAddr, isOnline: true }],
-              unreadCount: 1,
-              isPinned: false,
-              isMuted: false,
-              createdAt: msg.sent,
-              updatedAt: msg.sent,
-              lastMessage: newMsg,
+              unreadCount:  1,
+              isPinned:     false,
+              isMuted:      false,
+              createdAt:    msg.sent,
+              updatedAt:    msg.sent,
+              lastMessage:  newMsg,
             });
           }
 
@@ -113,7 +110,29 @@ export default function App() {
         globalStreamRef.current = null;
       }
     };
-  }, [xmtpReady]);
+  }, [xmtpAvailable]);
+
+  // ── Trigger 3: Auto-retry XMTP every 30s when connected but not available ─
+  useEffect(() => {
+    if (!isConnected || !xmtpReady || xmtpAvailable) return;
+
+    console.log('🔄 Запускаем авто-ретрай XMTP каждые 30с...');
+    const id = setInterval(() => {
+      if (xmtpService.isInitialized()) {
+        clearInterval(id);
+        return;
+      }
+      retryXmtp();
+    }, 30_000);
+
+    // First retry immediately after 5s (gives network a bit of time)
+    const firstRetry = setTimeout(() => retryXmtp(), 5_000);
+
+    return () => {
+      clearInterval(id);
+      clearTimeout(firstRetry);
+    };
+  }, [isConnected, xmtpReady, xmtpAvailable, retryXmtp]);
 
   const handleChatSelect = (chatId: string) => {
     setActiveChat(chatId);
@@ -126,6 +145,15 @@ export default function App() {
   };
 
   const filteredQuery = searchQuery.toLowerCase();
+
+  // Status label for empty-state panel
+  const xmtpStatus = !isConnected
+    ? null
+    : xmtpAvailable
+      ? '🔒 E2E шифрование активно'
+      : xmtpReady
+        ? '⚠️ XMTP недоступен — сообщения сохраняются локально'
+        : '⏳ XMTP подключается...';
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#f1f1f1] dark:bg-[#0f0f0f] transition-colors">
@@ -209,10 +237,21 @@ export default function App() {
                     Выберите чат для начала общения
                   </span>
                 </div>
-                {isConnected && (
+                {xmtpStatus && (
                   <div className="mt-4">
-                    <p className="text-white/50 text-xs">
-                      {xmtpReady ? 'XMTP подключён · E2E шифрование активно' : 'Подключение XMTP...'}
+                    <p className="text-white/50 text-xs flex items-center justify-center gap-1.5">
+                      {!xmtpAvailable && xmtpReady && (
+                        <span
+                          onClick={() => retryXmtp()}
+                          className="underline cursor-pointer hover:text-white/80 transition-colors"
+                        >
+                          Повторить
+                        </span>
+                      )}
+                      {!xmtpAvailable && !xmtpReady && (
+                        <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white/70 rounded-full animate-spin" />
+                      )}
+                      {xmtpStatus}
                     </p>
                   </div>
                 )}
