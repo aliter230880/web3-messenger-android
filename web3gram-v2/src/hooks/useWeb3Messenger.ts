@@ -62,14 +62,16 @@ export function useWeb3Messenger() {
       // ── STEP 4: XMTP — background, не блокирует UI ───────────────────
       // При первом подключении: 1 подпись MetaMask
       // При повторном: ключи из IndexedDB, без подписи
+      // ВАЖНО: setXmtpReady(true) вызывается В ЛЮБОМ СЛУЧАЕ (успех или таймаут/ошибка)
+      // чтобы UI не висел вечно в "XMTP подключается..."
       xmtpService.initialize(signer)
         .then(() => {
-          console.log('✅ XMTP ready in background');
+          console.log('✅ XMTP ready');
           setXmtpReady(true);
         })
         .catch((e) => {
-          console.warn('⚠️ XMTP (skipped):', e);
-          // Не блокируем — работаем без E2E шифрования
+          console.warn('⚠️ XMTP недоступен (работаем без E2E):', e?.message ?? e);
+          setXmtpReady(true); // разблокируем UI даже если XMTP упал
         });
     },
     [setWallet, setE2EInitialized, setXmtpReady, setCurrentUser]
