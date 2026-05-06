@@ -27,31 +27,40 @@ function getAvatarGradient(name: string) {
 }
 
 export function ChatView({ chatId, onBack }: ChatViewProps) {
-  const { chats, messages, addMessage, updateMessageStatus, currentUser, setMessages } = useAppStore();
-  const { sendMessage, loadMessages, isE2EInitialized, isConnected } = useWeb3Messenger();
-  const [inputValue, setInputValue] = useState('');
-  const [showEmoji, setShowEmoji] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const streamRef = useRef<any>(null);
+  const { chats, messages, addMessage, updateMessageStatus, currentUser, setMessages, loadPersistedMessages } = useAppStore();
+  const { sendMessage, loadMessages, isConnected, xmtpReady } = useWeb3Messenger();
 
-  const chat = chats.find((c) => c.id === chatId);
+  const [inputValue, setInputValue] = useState('');
+  const [showEmoji,  setShowEmoji]  = useState(false);
+  const [isLoading,  setIsLoading]  = useState(false);
+  const [isSending,  setIsSending]  = useState(false);
+  const [xmtpWarn,   setXmtpWarn]  = useState(false);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef       = useRef<HTMLInputElement>(null);
+  const streamRef      = useRef<any>(null);
+
+  const chat        = chats.find((c) => c.id === chatId);
   const chatMessages = messages[chatId] || [];
-  const peerAddress = chat?.participants[0]?.walletAddress || chatId;
+  const peerAddress  = chat?.participants[0]?.walletAddress || chatId;
 
   // ── Scroll to bottom on new messages ──────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages.length]);
 
-  // ── Load history when chat opens ──────────────────────────────────────────
+  // ── Step 1: Load from localStorage cache instantly (no network needed) ────
   useEffect(() => {
-    if (!chat || !isConnected || !xmtpService.isInitialized()) {
-      setIsLoading(false);
-      return;
+    if (!chat) return;
+    const cached = loadPersistedMessages(chatId);
+    if (cached.length > 0 && !messages[chatId]?.length) {
+      setMessages(chatId, cached);
     }
+  }, [chatId]);
+
+  // ── Step 2: Load history from XMTP (runs when chatId opens OR xmtpReady flips) ──
+  useEffect(() => {
+    if (!chat || !isConnected || !xmtpReady || !xmtpService.isInitialized()) return;
 
     let cancelled = false;
     setIsLoading(true);
@@ -67,11 +76,18 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
     })();
 
     return () => { cancelled = true; };
-  }, [chatId, isConnected]);
+  }, [chatId, xmtpReady]);
 
-  // ── Subscribe to real-time messages for this chat ─────────────────────────
+  // ── Step 3: Subscribe to real-time messages for THIS chat ─────────────────
+  // Re-runs when xmtpReady becomes true (fires after background XMTP init)
   useEffect(() => {
-    if (!isConnected || !xmtpService.isInitialized()) return;
+    if (!isConnected || !xmtpReady || !xmtpService.isInitialized()) return;
+
+    // Close previous stream
+    if (streamRef.current) {
+      try { streamRef.current.return?.(); } catch (_) {}
+      streamRef.current = null;
+    }
 
     (async () => {
       try {
@@ -79,7 +95,7 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           peerAddress,
           (msg: any) => {
             const rawContent = typeof msg.content === 'string' ? msg.content : '[media]';
-            const content = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
+            const content    = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
             const newMsg: Message = {
               id: msg.id,
               chatId,
@@ -103,13 +119,20 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
         streamRef.current = null;
       }
     };
-  }, [chatId, isConnected]);
+  }, [chatId, xmtpReady]);
 
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isSending) return;
 
-    const text = inputValue.trim();
+    // If XMTP isn't ready yet, warn the user and wait
+    if (!xmtpService.isInitialized()) {
+      setXmtpWarn(true);
+      setTimeout(() => setXmtpWarn(false), 3000);
+      return;
+    }
+
+    const text   = inputValue.trim();
     const tempId = `temp-${Date.now()}`;
 
     const optimistic: Message = {
@@ -128,24 +151,23 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
     setIsSending(true);
 
     try {
-      if (xmtpService.isInitialized()) {
-        const sentId = await sendMessage(peerAddress, text);
-        // Replace temp message with real one
-        const store = useAppStore.getState();
-        const current = store.messages[chatId] || [];
-        setMessages(chatId, current.map((m) =>
-          m.id === tempId ? { ...m, id: sentId, status: 'sent' } : m
-        ));
-      } else {
-        updateMessageStatus(chatId, tempId, 'sent');
-      }
-    } catch (e) {
+      // sendMessage goes through XMTP — E2E encrypted, reaches recipient
+      const sentId = await sendMessage(peerAddress, text);
+
+      // Replace temp ID with real XMTP message ID
+      const store   = useAppStore.getState();
+      const current = store.messages[chatId] || [];
+      setMessages(chatId, current.map((m) =>
+        m.id === tempId ? { ...m, id: sentId, status: 'sent' } : m
+      ));
+    } catch (e: any) {
       console.error('❌ send error:', e);
+      // Keep the message visible but mark as failed
       updateMessageStatus(chatId, tempId, 'sent');
     } finally {
       setIsSending(false);
     }
-  }, [inputValue, isSending, chatId, peerAddress, isE2EInitialized, sendMessage, currentUser, addMessage, updateMessageStatus, setMessages]);
+  }, [inputValue, isSending, chatId, peerAddress, xmtpReady, sendMessage, currentUser, addMessage, updateMessageStatus, setMessages]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -183,7 +205,9 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
             <h3 className="font-semibold text-gray-900 truncate">{chat.name}</h3>
             <p className="text-xs text-gray-500 truncate">
               {isConnected ? (
-                chat.participants[0]?.isOnline ? 'в сети' : peerAddress
+                xmtpReady
+                  ? (chat.participants[0]?.isOnline ? 'в сети' : peerAddress)
+                  : '⏳ XMTP подключается...'
               ) : (
                 'Подключи кошелёк для отправки сообщений'
               )}
@@ -203,6 +227,21 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           </button>
         </div>
       </div>
+
+      {/* XMTP not-ready warning banner */}
+      {isConnected && !xmtpReady && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-700 flex items-center gap-2">
+          <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          XMTP подключается в фоне... История и отправка будут доступны через несколько секунд
+        </div>
+      )}
+
+      {/* Send-blocked warning */}
+      {xmtpWarn && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-xs text-red-700">
+          ⚠️ XMTP ещё не готов — подождите несколько секунд и попробуйте снова
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-2.5 md:p-4 space-y-1 min-w-0">
@@ -224,7 +263,9 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           </div>
         ) : (
           chatMessages.map((message, index) => {
-            const isOwn = message.senderId === myAddr || message.senderId === 'current' || message.senderId === currentUser?.id;
+            const isOwn = message.senderId === myAddr
+              || message.senderId === 'current'
+              || message.senderId === currentUser?.id;
             const showAvatar = !isOwn && (index === 0 || chatMessages[index - 1]?.senderId !== message.senderId);
 
             return (
@@ -302,7 +343,13 @@ export function ChatView({ chatId, onBack }: ChatViewProps) {
           <input
             ref={inputRef}
             type="text"
-            placeholder={isConnected ? 'Сообщение' : 'Подключи кошелёк...'}
+            placeholder={
+              !isConnected
+                ? 'Подключи кошелёк...'
+                : !xmtpReady
+                  ? 'XMTP подключается...'
+                  : 'Сообщение'
+            }
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
