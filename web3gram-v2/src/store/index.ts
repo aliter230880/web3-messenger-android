@@ -14,7 +14,6 @@ interface AppState {
   isAvatarSelectorOpen: boolean;
   e2e: E2EState;
 
-  // Actions
   setCurrentUser: (user: User | null) => void;
   toggleDarkMode: () => void;
   setE2EInitialized: (initialized: boolean) => void;
@@ -47,23 +46,51 @@ function _lsDel(key: string) {
   try { localStorage.removeItem(key); } catch {}
 }
 
-const savedName    = _ls('w3g_name');
-const savedAvatarId = _ls('w3g_avatarId');
-const savedAddress = _ls('w3g_address');
-const isDark       = _ls('theme') === 'dark';
+// ── Chat persistence helpers (per wallet address) ─────────────────────────
+function chatsKey(address: string) {
+  return `w3g_chats_${address.toLowerCase()}`;
+}
 
-if (typeof document !== 'undefined') {
-  if (isDark) {
-    document.documentElement.classList.add('dark');
-  } else {
-    document.documentElement.classList.remove('dark');
+function loadSavedChats(address: string | null): Chat[] {
+  if (!address) return mockChats;
+  try {
+    const raw = _ls(chatsKey(address));
+    if (!raw) return [];
+    const parsed: any[] = JSON.parse(raw);
+    return parsed.map((c) => ({
+      ...c,
+      createdAt: new Date(c.createdAt),
+      updatedAt: new Date(c.updatedAt),
+      lastMessage: c.lastMessage
+        ? { ...c.lastMessage, timestamp: new Date(c.lastMessage.timestamp) }
+        : undefined,
+    }));
+  } catch {
+    return [];
   }
 }
 
+function persistChats(address: string | null, chats: Chat[]) {
+  if (!address) return;
+  const real = chats.filter((c) => !c.id.startsWith('mock-'));
+  try {
+    _lsSet(chatsKey(address), JSON.stringify(real));
+  } catch {}
+}
+
+// ── Initial values from localStorage ─────────────────────────────────────
+const savedName     = _ls('w3g_name');
+const savedAvatarId = _ls('w3g_avatarId');
+const savedAddress  = _ls('w3g_address');
+const isDark        = _ls('theme') === 'dark';
+
+if (typeof document !== 'undefined') {
+  document.documentElement.classList.toggle('dark', isDark);
+}
+
+// ── Mock data (shown only when no wallet connected) ───────────────────────
 const mockUsers: User[] = [
   { id: '1', name: 'Алексей Петров', avatar: 'AP', walletAddress: '0x742d35Cc6634C0532925a3b8D4C9C4e07B7A5c8f', isOnline: true },
-  { id: '2', name: 'Мария Иванова', avatar: 'МИ', walletAddress: '0x8b3c22Dd7745E1643036b8D5A4B8C6d7E8f92a1b', isOnline: false, lastSeen: new Date(Date.now() - 3600000) },
-  { id: '3', name: 'Crypto Trader', avatar: 'CT', walletAddress: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b', isOnline: true },
 ];
 
 const mockChats: Chat[] = [
@@ -83,6 +110,11 @@ const mockMessages: Record<string, Message[]> = {
   ],
 };
 
+// ── Initial state ─────────────────────────────────────────────────────────
+// Если адрес сохранён → показываем сохранённые реальные чаты (или пустой список)
+// Если нет → показываем демо-чат
+const _initChats = loadSavedChats(savedAddress);
+
 const _initUser: User = {
   id: 'current',
   name: savedName || 'Пользователь',
@@ -96,22 +128,26 @@ const _initWallet: WalletState = savedAddress
   ? { isConnected: true, address: savedAddress, chainId: 137 }
   : { isConnected: false, address: null, chainId: null };
 
+// Если адрес сохранён в localStorage — считаем инициализированным
+// (полный auth flow запустится при следующем подключении, но UI разблокирован)
+const _initE2E: E2EState = {
+  isInitialized: !!savedAddress,
+  xmtpReady: false,
+  contractsReady: false,
+};
+
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: _initUser,
   wallet: _initWallet,
-  chats: mockChats,
+  chats: _initChats,
   activeChatId: null,
-  messages: mockMessages,
+  messages: {},
   searchQuery: '',
   isSettingsOpen: false,
   isWalletModalOpen: false,
   isDarkMode: isDark,
   isAvatarSelectorOpen: false,
-  e2e: {
-    isInitialized: false,
-    xmtpReady: false,
-    contractsReady: false,
-  },
+  e2e: _initE2E,
 
   setCurrentUser: (user) => {
     set({ currentUser: user });
@@ -129,21 +165,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ wallet });
     if (wallet.address) {
       _lsSet('w3g_address', wallet.address);
+      // При смене адреса — подгружаем сохранённые чаты для этого адреса
+      const { chats } = get();
+      const hasReal = chats.some((c) => !c.id.startsWith('mock-'));
+      if (!hasReal) {
+        const saved = loadSavedChats(wallet.address);
+        if (saved.length > 0) set({ chats: saved });
+      }
     } else {
       _lsDel('w3g_address');
+      // При отключении — показываем демо-чат
+      set({ chats: mockChats, messages: mockMessages, activeChatId: null });
     }
   },
 
   toggleDarkMode: () => {
     const newMode = !get().isDarkMode;
     set({ isDarkMode: newMode });
-    if (newMode) {
-      document.documentElement.classList.add('dark');
-      _lsSet('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      _lsSet('theme', 'light');
-    }
+    document.documentElement.classList.toggle('dark', newMode);
+    _lsSet('theme', newMode ? 'dark' : 'light');
   },
 
   toggleAvatarSelector: () =>
@@ -152,31 +192,43 @@ export const useAppStore = create<AppState>((set, get) => ({
   setAvatar: (avatarId) => {
     const { currentUser } = get();
     if (currentUser) {
-      const updated = { ...currentUser, avatar: undefined, avatarId };
-      set({ currentUser: updated });
+      set({ currentUser: { ...currentUser, avatar: undefined, avatarId } });
       _lsSet('w3g_avatarId', String(avatarId));
     }
   },
 
-  setChats: (chats) => set({ chats }),
+  setChats: (chats) => {
+    set({ chats });
+    persistChats(get().wallet.address, chats);
+  },
 
   upsertChat: (chat) => {
-    const { chats } = get();
+    const { chats, wallet } = get();
     const idx = chats.findIndex((c) => c.id === chat.id);
+    let updated: Chat[];
     if (idx >= 0) {
-      const updated = [...chats];
+      updated = [...chats];
       updated[idx] = { ...chats[idx], ...chat };
-      set({ chats: updated });
     } else {
-      set({ chats: [chat, ...chats] });
+      updated = [chat, ...chats];
     }
+    set({ chats: updated });
+    persistChats(wallet.address, updated);
   },
 
   setMessages: (chatId, msgs) =>
     set((state) => ({ messages: { ...state.messages, [chatId]: msgs } })),
 
-  clearMockData: () =>
-    set({ chats: [], messages: {}, activeChatId: null }),
+  // Убираем только mock-чаты, реальные контакты остаются
+  clearMockData: () => {
+    const { chats, messages } = get();
+    const realChats = chats.filter((c) => !c.id.startsWith('mock-'));
+    const realMessages: Record<string, Message[]> = {};
+    Object.keys(messages).forEach((k) => {
+      if (!k.startsWith('mock-')) realMessages[k] = messages[k];
+    });
+    set({ chats: realChats, messages: realMessages });
+  },
 
   setActiveChat: (chatId) => {
     if (chatId) get().markChatAsRead(chatId);
@@ -233,13 +285,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   deleteChat: (chatId) => {
-    const { chats, messages, activeChatId } = get();
+    const { chats, messages, activeChatId, wallet } = get();
     const newMessages = { ...messages };
     delete newMessages[chatId];
+    const newChats = chats.filter((chat) => chat.id !== chatId);
     set({
-      chats: chats.filter((chat) => chat.id !== chatId),
+      chats: newChats,
       messages: newMessages,
       activeChatId: activeChatId === chatId ? null : activeChatId,
     });
+    persistChats(wallet.address, newChats);
   },
 }));
