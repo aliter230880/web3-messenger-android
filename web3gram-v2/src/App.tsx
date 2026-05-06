@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Menu, Search, Edit3, Wallet } from 'lucide-react';
 import { useAppStore } from './store';
 import { ChatList } from './components/ChatList';
@@ -8,30 +8,93 @@ import { WalletModal } from './components/WalletModal';
 import { NewChatModal } from './components/NewChatModal';
 import { AvatarSelector } from './components/AvatarSelector';
 import { useWeb3Messenger } from './hooks/useWeb3Messenger';
+import { xmtpService } from './services/xmtpService';
+import type { Message } from './types';
 
 export default function App() {
   const { activeChatId, setActiveChat, toggleSettings, toggleWalletModal } = useAppStore();
   const isAvatarSelectorOpen = useAppStore((state) => state.isAvatarSelectorOpen);
   const toggleAvatarSelector = useAppStore((state) => state.toggleAvatarSelector);
   const setAvatar = useAppStore((state) => state.setAvatar);
-  const { isConnecting, isConnected, address, connectAliTerra } = useWeb3Messenger();
+  const searchQuery = useAppStore((state) => state.searchQuery);
+  const setSearchQuery = useAppStore((state) => state.setSearchQuery);
+  const currentAvatarId = useAppStore((state) => state.currentUser?.avatarId);
+
+  const { isConnecting, isConnected, address, connectAliTerra, loadChats, isE2EInitialized } = useWeb3Messenger();
   const [showMobileList, setShowMobileList] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
+  const globalStreamRef = useRef<any>(null);
 
-  // ── AliTerra Wallet redirect-back callback (Capacitor mode) ────────────────
-  // wallet.aliterra.space redirects back with ?w3g_addr=0x... after unlock.
-  // We detect it on mount, auto-connect, and clean the URL.
+  // ── AliTerra Wallet redirect-back callback ────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const w3gAddr = params.get('w3g_addr');
     if (w3gAddr && w3gAddr.startsWith('0x') && w3gAddr.length >= 42) {
-      // Strip ?w3g_addr from URL immediately
       const clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', clean);
-      // Auto-connect as AliTerra read-only
       connectAliTerra(w3gAddr).catch(console.error);
     }
-  }, []); // run once on mount
+  }, []);
+
+  // ── When XMTP initializes: load conversations + global message stream ─────
+  useEffect(() => {
+    if (!isE2EInitialized) return;
+
+    let cancelled = false;
+
+    (async () => {
+      await loadChats();
+      if (cancelled) return;
+
+      try {
+        globalStreamRef.current = await xmtpService.subscribeToAllMessages((msg: any) => {
+          const store = useAppStore.getState();
+          const senderAddr: string = msg.senderAddress;
+          const myAddr = store.wallet.address?.toLowerCase();
+
+          if (senderAddr.toLowerCase() === myAddr) return;
+
+          const chatId = senderAddr.toLowerCase();
+          const rawContent = typeof msg.content === 'string' ? msg.content : '[media]';
+          const displayContent = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
+
+          const newMsg: Message = {
+            id: msg.id,
+            chatId,
+            senderId: senderAddr.toLowerCase(),
+            content: displayContent,
+            timestamp: msg.sent,
+            status: 'delivered',
+            type: 'text',
+          };
+
+          const existingChat = store.chats.find((c) => c.id === chatId);
+          if (!existingChat) {
+            const shortAddr = `${senderAddr.slice(0, 6)}…${senderAddr.slice(-4)}`;
+            store.upsertChat({
+              id: chatId,
+              type: 'private',
+              name: shortAddr,
+              avatar: senderAddr.slice(2, 4).toUpperCase(),
+              participants: [{ id: senderAddr, name: shortAddr, walletAddress: senderAddr, isOnline: true }],
+              unreadCount: 1,
+              isPinned: false,
+              isMuted: false,
+              createdAt: msg.sent,
+              updatedAt: msg.sent,
+              lastMessage: newMsg,
+            });
+          }
+
+          store.addMessage(chatId, newMsg);
+        });
+      } catch (e) {
+        console.warn('Global stream error:', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isE2EInitialized]);
 
   const handleChatSelect = (chatId: string) => {
     setActiveChat(chatId);
@@ -43,10 +106,12 @@ export default function App() {
     setShowMobileList(true);
   };
 
+  const filteredQuery = searchQuery.toLowerCase();
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#f1f1f1] dark:bg-[#0f0f0f] transition-colors">
       <div className="h-full w-full flex flex-col lg:flex-row">
-        {/* Sidebar - Chat List */}
+        {/* Sidebar */}
         <div
           className={`${
             showMobileList ? 'flex' : 'hidden'
@@ -66,6 +131,8 @@ export default function App() {
               <input
                 type="text"
                 placeholder="Поиск"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-11 pr-4 py-2.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-[#3390ec] rounded-full text-gray-900 dark:text-white placeholder-gray-500 transition-all outline-none"
               />
             </div>
@@ -100,7 +167,7 @@ export default function App() {
           </div>
 
           {/* Chat List */}
-          <ChatList onChatSelect={handleChatSelect} />
+          <ChatList onChatSelect={handleChatSelect} searchQuery={filteredQuery} />
         </div>
 
         {/* Chat View */}
@@ -119,11 +186,16 @@ export default function App() {
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                   </svg>
                 </div>
-                <div className="inline-block px-4 py-1.5 bg-black/20 dark:bg-white/20 rounded-full">
+                <div className="inline-block px-4 py-1.5 bg-black/20 dark:bg-white/20 rounded-full mb-3">
                   <span className="text-white/70 text-sm font-medium">
                     Выберите чат для начала общения
                   </span>
                 </div>
+                {isE2EInitialized && (
+                  <div className="mt-4">
+                    <p className="text-white/50 text-xs">XMTP подключён · E2E шифрование активно</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -138,7 +210,7 @@ export default function App() {
         isOpen={isAvatarSelectorOpen}
         onClose={toggleAvatarSelector}
         onSelect={setAvatar}
-        selectedAvatar={useAppStore((state) => state.currentUser?.avatarId)}
+        selectedAvatar={currentAvatarId}
       />
     </div>
   );

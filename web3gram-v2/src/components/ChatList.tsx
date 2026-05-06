@@ -6,13 +6,15 @@ import { ru } from 'date-fns/locale';
 
 interface ChatListProps {
   onChatSelect: (chatId: string) => void;
+  searchQuery?: string;
 }
 
-export function ChatList({ onChatSelect }: ChatListProps) {
+export function ChatList({ onChatSelect, searchQuery = '' }: ChatListProps) {
   const { chats, pinChat, muteChat, deleteChat } = useAppStore();
   const [contextMenu, setContextMenu] = useState<{ chatId: string; x: number; y: number } | null>(null);
 
   const filteredChats = chats
+    .filter((c) => !searchQuery || c.name.toLowerCase().includes(searchQuery) || c.participants.some((p) => p.walletAddress?.toLowerCase().includes(searchQuery)))
     .sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;

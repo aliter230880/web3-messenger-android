@@ -1,75 +1,64 @@
-import { useState } from 'react';
-import { Search, UserPlus, ArrowLeft } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Search, ArrowLeft, CheckCircle, XCircle, Loader, MessageSquarePlus } from 'lucide-react';
 import { useAppStore } from '../store';
+import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface NewChatModalProps {
   onClose: () => void;
 }
 
+const AVATAR_GRADIENTS = [
+  'avatar-gradient-1','avatar-gradient-2','avatar-gradient-3','avatar-gradient-4',
+  'avatar-gradient-5','avatar-gradient-6','avatar-gradient-7','avatar-gradient-8',
+];
+
+function getAvatarGradient(name: string) {
+  return AVATAR_GRADIENTS[name.charCodeAt(0) % AVATAR_GRADIENTS.length];
+}
+
+type CheckState = 'idle' | 'checking' | 'ok' | 'error';
+
 export function NewChatModal({ onClose }: NewChatModalProps) {
-  const { chats, setChats, setActiveChat } = useAppStore();
-  const [searchQuery, setSearchQuery] = useState('');
+  const { chats, setActiveChat } = useAppStore();
+  const { canMessage, startChat, isE2EInitialized } = useWeb3Messenger();
 
-  const contacts = [
-    { id: 'c1', name: 'Александр Волков', avatar: 'АВ', walletAddress: '0x1a2b...3c4d', isOnPlatform: true },
-    { id: 'c2', name: 'Дмитрий Соколов', avatar: 'ДС', walletAddress: '0x5e6f...7g8h', isOnPlatform: true },
-    { id: 'c3', name: 'Елена Кузнецова', avatar: 'ЕК', walletAddress: null, isOnPlatform: false },
-    { id: 'c4', name: 'Игорь Морозов', avatar: 'ИМ', walletAddress: '0x9i0j...1k2l', isOnPlatform: true },
-    { id: 'c5', name: 'Наталья Павлова', avatar: 'НП', walletAddress: '0x3m4n...5o6p', isOnPlatform: true },
-  ];
+  const [addressInput, setAddressInput] = useState('');
+  const [checkState, setCheckState] = useState<CheckState>('idle');
+  const [checkError, setCheckError] = useState('');
 
-  const filteredContacts = contacts.filter((contact) =>
-    contact.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const isValidAddress = /^0x[0-9a-fA-F]{40}$/.test(addressInput.trim());
+  const existingChats = chats.filter((c) => !c.id.startsWith('mock-'));
 
-  const handleStartChat = (contact: typeof contacts[0]) => {
-    const existingChat = chats.find(
-      (chat) => chat.participants.some((p) => p.name === contact.name)
-    );
-
-    if (existingChat) {
-      setActiveChat(existingChat.id);
-    } else {
-      const newChat = {
-        id: `chat-${Date.now()}`,
-        type: 'private' as const,
-        name: contact.name,
-        avatar: contact.avatar,
-        participants: [
-          {
-            id: contact.id,
-            name: contact.name,
-            avatar: contact.avatar,
-            walletAddress: contact.walletAddress,
-            isOnline: false,
-          },
-        ],
-        unreadCount: 0,
-        isPinned: false,
-        isMuted: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      setChats([newChat, ...chats]);
-      setActiveChat(newChat.id);
+  const handleCheck = useCallback(async () => {
+    const addr = addressInput.trim();
+    if (!isValidAddress) return;
+    setCheckState('checking');
+    setCheckError('');
+    try {
+      const ok = await canMessage(addr);
+      if (ok) {
+        setCheckState('ok');
+      } else {
+        setCheckState('error');
+        setCheckError('Этот адрес ещё не зарегистрирован в XMTP. Попросите собеседника войти в Web3 Messenger.');
+      }
+    } catch (e: any) {
+      setCheckState('error');
+      setCheckError(e?.message || 'Ошибка проверки');
     }
-    onClose();
-  };
+  }, [addressInput, isValidAddress, canMessage]);
 
-  const getAvatarGradient = (name: string) => {
-    const colors = [
-      'avatar-gradient-1',
-      'avatar-gradient-2',
-      'avatar-gradient-3',
-      'avatar-gradient-4',
-      'avatar-gradient-5',
-      'avatar-gradient-6',
-      'avatar-gradient-7',
-      'avatar-gradient-8',
-    ];
-    const index = name.charCodeAt(0) % colors.length;
-    return colors[index];
+  const handleStartChat = useCallback(() => {
+    const addr = addressInput.trim();
+    const chatId = startChat(addr);
+    setActiveChat(chatId);
+    onClose();
+  }, [addressInput, startChat, setActiveChat, onClose]);
+
+  const handleSelectExisting = (chat: typeof chats[0]) => {
+    setActiveChat(chat.id);
+    onClose();
   };
 
   return (
@@ -97,67 +86,119 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
             >
               <ArrowLeft className="w-6 h-6 text-white" />
             </button>
-            <h2 className="text-lg font-semibold text-white flex-1">
-              Новый чат
-            </h2>
+            <h2 className="text-lg font-semibold text-white flex-1">Новый чат</h2>
           </div>
 
-          {/* Search */}
-          <div className="p-3 bg-white border-b border-gray-300">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Поиск контактов"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-4 py-2.5 bg-gray-100 hover:bg-gray-200 focus:bg-white focus:ring-2 focus:ring-[#3390ec] rounded-full text-gray-900 placeholder-gray-500 transition-all outline-none"
-              />
-            </div>
-          </div>
-
-          {/* Contacts List */}
           <div className="flex-1 overflow-y-auto">
-            <div className="py-2">
-              <div className="px-4 py-2 text-sm font-medium text-gray-500">
-                Контактов: {filteredContacts.length}
-              </div>
-              
-              {filteredContacts.map((contact) => (
-                <button
-                  key={contact.id}
-                  onClick={() => handleStartChat(contact)}
-                  className="w-full flex items-center gap-3 p-3 mx-2 my-0.5 hover:bg-gray-100 rounded-xl transition-colors"
-                >
-                  <div className={`w-12 h-12 rounded-full ${getAvatarGradient(contact.name)} flex items-center justify-center text-white font-semibold text-base flex-shrink-0`}>
-                    {contact.avatar}
-                  </div>
-                  <div className="flex-1 text-left border-b border-gray-100 pb-2.5">
-                    <h3 className="font-medium text-gray-900">
-                      {contact.name}
-                    </h3>
-                    <p className="text-sm text-gray-500">
-                      {contact.isOnPlatform
-                        ? contact.walletAddress || 'В Web3 Messenger'
-                        : 'Пригласить в Messenger'}
-                    </p>
-                  </div>
-                  {contact.isOnPlatform ? (
-                    <UserPlus className="w-5 h-5 text-[#3390ec] flex-shrink-0" />
-                  ) : (
-                    <span className="text-xs px-2.5 py-1 bg-gray-200 rounded-full text-gray-500 flex-shrink-0">
-                      Пригласить
-                    </span>
-                  )}
-                </button>
-              ))}
+            {/* Address input section */}
+            <div className="bg-white mx-0 mt-0 p-4 border-b border-gray-200">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                Начать чат по адресу кошелька
+              </p>
 
-              {filteredContacts.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-32 text-gray-400">
-                  <p className="text-sm">Контакты не найдены</p>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  value={addressInput}
+                  onChange={(e) => {
+                    setAddressInput(e.target.value);
+                    setCheckState('idle');
+                    setCheckError('');
+                  }}
+                  className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 focus:bg-white focus:ring-2 focus:ring-[#3390ec] rounded-xl text-gray-900 placeholder-gray-400 outline-none transition-all font-mono text-sm"
+                />
+              </div>
+
+              {/* Status */}
+              {checkState === 'ok' && (
+                <div className="flex items-center gap-2 mt-3 text-emerald-600">
+                  <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm">Адрес зарегистрирован в XMTP, можно писать!</span>
                 </div>
               )}
+              {checkState === 'error' && (
+                <div className="flex items-start gap-2 mt-3 text-red-500">
+                  <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span className="text-sm">{checkError}</span>
+                </div>
+              )}
+              {!isE2EInitialized && (
+                <p className="text-xs text-amber-600 mt-2">
+                  Подключи кошелёк, чтобы отправлять реальные сообщения
+                </p>
+              )}
+
+              {/* Buttons */}
+              <div className="flex gap-2 mt-3">
+                {checkState !== 'ok' ? (
+                  <button
+                    onClick={handleCheck}
+                    disabled={!isValidAddress || checkState === 'checking'}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#3390ec] hover:bg-[#2b7ecc] disabled:opacity-40 text-white rounded-xl text-sm font-medium transition-colors"
+                  >
+                    {checkState === 'checking' ? (
+                      <Loader className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Search className="w-4 h-4" />
+                    )}
+                    {checkState === 'checking' ? 'Проверяем...' : 'Проверить'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleStartChat}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-medium transition-colors"
+                  >
+                    <MessageSquarePlus className="w-4 h-4" />
+                    Начать чат
+                  </button>
+                )}
+                {/* Skip check — start anyway (for demo / same-client) */}
+                {isValidAddress && checkState !== 'ok' && (
+                  <button
+                    onClick={handleStartChat}
+                    className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    Всё равно открыть
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Existing conversations */}
+            {existingChats.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-2">
+                  Ваши диалоги ({existingChats.length})
+                </p>
+                {existingChats.map((chat) => (
+                  <button
+                    key={chat.id}
+                    onClick={() => handleSelectExisting(chat)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white transition-colors"
+                  >
+                    <div className={`w-12 h-12 rounded-full ${getAvatarGradient(chat.name)} flex items-center justify-center text-white font-semibold text-sm flex-shrink-0`}>
+                      {chat.avatar || chat.name.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex-1 text-left border-b border-gray-100 pb-3">
+                      <h3 className="font-medium text-gray-900">{chat.name}</h3>
+                      <p className="text-sm text-gray-500 truncate">
+                        {chat.lastMessage?.content || 'Нет сообщений'}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {existingChats.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-400 px-8">
+                <MessageSquarePlus className="w-12 h-12 mb-4 opacity-40" />
+                <p className="text-sm text-center">
+                  Введи Ethereum-адрес собеседника выше, чтобы начать зашифрованный чат
+                </p>
+              </div>
+            )}
           </div>
         </motion.div>
       </>

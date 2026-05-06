@@ -4,6 +4,7 @@ import type { Signer } from 'ethers';
 export class XMTPService {
   private client: Client | null = null;
   private static instance: XMTPService;
+  private _globalStream: any = null;
 
   private constructor() {}
 
@@ -14,176 +15,111 @@ export class XMTPService {
     return XMTPService.instance;
   }
 
-  /**
-   * Инициализация XMTP клиента
-   */
   async initialize(signer: Signer): Promise<void> {
     try {
       this.client = await Client.create(signer, {
-        env: 'production', // production для mainnet, dev для testnet
+        env: 'production',
       });
-      console.log('✅ XMTP клиент инициализирован');
+      console.log('✅ XMTP клиент инициализирован:', this.client.address);
     } catch (error) {
       console.error('❌ Ошибка инициализации XMTP:', error);
       throw error;
     }
   }
 
-  /**
-   * Проверка инициализации
-   */
   isInitialized(): boolean {
     return this.client !== null;
   }
 
-  /**
-   * Получение адреса клиента
-   */
   getAddress(): string | null {
     return this.client?.address || null;
   }
 
-  /**
-   * Отправка сообщения
-   */
   async sendMessage(recipientAddress: string, message: string): Promise<string> {
-    if (!this.client) {
-      throw new Error('XMTP клиент не инициализирован');
-    }
-
-    try {
-      // Создание или получение диалога
-      const conversation = await this.client.conversations.newConversation(recipientAddress);
-      
-      // Отправка сообщения
-      const sentMessage = await conversation.send(message);
-      
-      console.log('✅ Сообщение отправлено:', sentMessage.id);
-      return sentMessage.id;
-    } catch (error) {
-      console.error('❌ Ошибка отправки сообщения:', error);
-      throw error;
-    }
+    if (!this.client) throw new Error('XMTP клиент не инициализирован');
+    const conversation = await this.client.conversations.newConversation(recipientAddress);
+    const sent = await conversation.send(message);
+    console.log('✅ Сообщение отправлено:', sent.id);
+    return sent.id;
   }
 
-  /**
-   * Получение списка диалогов
-   */
   async getConversations() {
-    if (!this.client) {
-      throw new Error('XMTP клиент не инициализирован');
-    }
-
-    try {
-      const conversations = await this.client.conversations.list();
-      return conversations;
-    } catch (error) {
-      console.error('❌ Ошибка получения диалогов:', error);
-      throw error;
-    }
+    if (!this.client) throw new Error('XMTP клиент не инициализирован');
+    return this.client.conversations.list();
   }
 
   /**
-   * Получение сообщений из диалога
+   * Загружает сообщения для конкретного диалога.
+   * Возвращает в хронологическом порядке (старые → новые).
    */
-  async getMessages(recipientAddress: string, limit: number = 100) {
-    if (!this.client) {
-      throw new Error('XMTP клиент не инициализирован');
-    }
-
-    try {
-      const conversation = await this.client.conversations.newConversation(recipientAddress);
-      const messages = await conversation.messages({ limit });
-      
-      // Сортировка по времени (новые сверху)
-      return messages.sort((a, b) => b.sent.getTime() - a.sent.getTime());
-    } catch (error) {
-      console.error('❌ Ошибка получения сообщений:', error);
-      throw error;
-    }
+  async getMessages(recipientAddress: string, limit: number = 50) {
+    if (!this.client) throw new Error('XMTP клиент не инициализирован');
+    const conversation = await this.client.conversations.newConversation(recipientAddress);
+    const messages = await conversation.messages({ limit });
+    return messages.sort((a, b) => a.sent.getTime() - b.sent.getTime());
   }
 
   /**
-   * Подписка на новые сообщения
+   * Подписка на сообщения конкретного диалога.
+   * Возвращает stream — caller должен вызвать stream.return() для отписки.
    */
   async subscribeToMessages(recipientAddress: string, callback: (message: any) => void) {
-    if (!this.client) {
-      throw new Error('XMTP клиент не инициализирован');
-    }
-
-    try {
-      const conversation = await this.client.conversations.newConversation(recipientAddress);
-      
-      // Подписка на новые сообщения
-      const stream = await conversation.streamMessages();
-      
-      // Асинхронное чтение сообщений из стрима
-      (async () => {
+    if (!this.client) throw new Error('XMTP клиент не инициализирован');
+    const conversation = await this.client.conversations.newConversation(recipientAddress);
+    const stream = await conversation.streamMessages();
+    (async () => {
+      try {
         for await (const message of stream) {
           callback(message);
         }
-      })();
-
-      return stream;
-    } catch (error) {
-      console.error('❌ Ошибка подписки на сообщения:', error);
-      throw error;
-    }
+      } catch (_) {}
+    })();
+    return stream;
   }
 
   /**
-   * Получение всех новых сообщений со всех диалогов
+   * Глобальная подписка на ВСЕ новые сообщения из всех диалогов.
+   * Вызывается один раз при инициализации XMTP.
    */
-  async getAllNewMessages(callback: (conversation: any, message: any) => void) {
-    if (!this.client) {
-      throw new Error('XMTP клиент не инициализирован');
+  async subscribeToAllMessages(callback: (message: any) => void) {
+    if (!this.client) throw new Error('XMTP клиент не инициализирован');
+
+    if (this._globalStream) {
+      try { await this._globalStream.return(); } catch (_) {}
     }
 
-    try {
-      const stream = await this.client.conversations.streamAllMessages();
-      
-      (async () => {
-        for await (const message of stream) {
-          const conversation = await this.client?.conversations.newConversation(message.senderAddress);
-          callback(conversation, message);
+    this._globalStream = await this.client.conversations.streamAllMessages();
+
+    (async () => {
+      try {
+        for await (const message of this._globalStream) {
+          callback(message);
         }
-      })();
+      } catch (_) {}
+    })();
 
-      return stream;
-    } catch (error) {
-      console.error('❌ Ошибка получения новых сообщений:', error);
-      throw error;
-    }
+    return this._globalStream;
   }
 
-  /**
-   * Проверка может ли пользователь получить сообщение (есть ли у него XMTP)
-   */
   async canMessage(address: string): Promise<boolean> {
     if (!this.client) {
-      return false;
+      try {
+        return Client.canMessage(address, { env: 'production' });
+      } catch { return false; }
     }
-
     try {
-      const canMessage = await Client.canMessage(address, { env: 'production' });
-      return canMessage;
-    } catch (error) {
-      console.error('❌ Ошибка проверки XMTP:', error);
-      return false;
-    }
+      return Client.canMessage(address, { env: 'production' });
+    } catch { return false; }
   }
 
-  /**
-   * Отключение клиента
-   */
   async disconnect() {
-    if (this.client) {
-      // XMTP v13 не имеет dispose, просто очищаем
-      this.client = null;
-      console.log('🔌 XMTP клиент отключён');
+    if (this._globalStream) {
+      try { await this._globalStream.return(); } catch (_) {}
+      this._globalStream = null;
     }
+    this.client = null;
+    console.log('🔌 XMTP клиент отключён');
   }
 }
 
-// Экспорт singleton instance
 export const xmtpService = XMTPService.getInstance();

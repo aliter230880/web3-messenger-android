@@ -5,6 +5,7 @@ import { authService } from '../services/authService';
 import { xmtpService } from '../services/xmtpService';
 import { contractService } from '../services/contractService';
 import { encryptionService } from '../services/encryptionService';
+import type { Chat, Message } from '../types';
 
 export function useWeb3Messenger() {
   const { setWallet, setE2EInitialized, setCurrentUser } = useAppStore();
@@ -37,12 +38,8 @@ export function useWeb3Messenger() {
         return;
       }
 
-      // authService.authenticate() has built-in 6s timeout on signMessage.
-      // It falls back to a local seed if MetaMask is in background — never hangs.
       const authData = await authService.authenticate(signer);
 
-      // XMTP Client.create() also calls signer.signMessage() internally.
-      // Wrap with 10s timeout so it never blocks the UI.
       try {
         await Promise.race([
           xmtpService.initialize(signer),
@@ -54,11 +51,9 @@ export function useWeb3Messenger() {
         console.warn('⚠️ XMTP (skipped):', e);
       }
 
-      // Smart-wallet contract call — also wrap with timeout.
       let smartWalletAddress = addr;
       try {
         contractService.initialize(provider!, signer);
-
         const loginResult = await Promise.race([
           contractService.loginWithFactory(addr),
           new Promise<never>((_, reject) =>
@@ -66,11 +61,10 @@ export function useWeb3Messenger() {
           ),
         ]);
         smartWalletAddress = loginResult.smartWalletAddress;
-
         if (!loginResult.alreadyRegistered) {
           console.log('🆕 Смарт-кошелёк создан на Polygon:', smartWalletAddress);
         } else {
-          console.log('✅ Смарт-кошелёк найден в LoginFactory:', smartWalletAddress);
+          console.log('✅ Смарт-кошелёк найден:', smartWalletAddress);
         }
       } catch (e) {
         console.warn('⚠️ Контракты/LoginFactory (skipped):', e);
@@ -87,19 +81,18 @@ export function useWeb3Messenger() {
         isOnline: true,
       });
 
-      console.log(`✅ Подключено через ${walletType}:`, addr, '| SmartWallet:', smartWalletAddress);
+      console.log(`✅ Подключено через ${walletType}:`, addr);
     },
     [setWallet, setE2EInitialized, setCurrentUser]
   );
 
-  // ── Standard wallet connect (MetaMask / Trust / WalletConnect) ──────────
+  // ── Standard wallet connect ───────────────────────────────────────────────
   const connect = useCallback(
     async (walletType: WalletType = 'metamask') => {
       setIsConnecting(true);
       setError(null);
       try {
         let connection: Awaited<ReturnType<typeof walletService.connectMetaMask>>;
-
         if (walletType === 'trust') {
           connection = await walletService.connectTrust();
         } else if (walletType === 'walletconnect') {
@@ -107,7 +100,6 @@ export function useWeb3Messenger() {
         } else {
           connection = await walletService.connectMetaMask();
         }
-
         await _finishConnect(connection);
       } catch (err: any) {
         console.error('❌ Ошибка подключения:', err);
@@ -120,26 +112,16 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
-  // ── Phase 1: Check if WC session exists — NO signing, instant ────────────
-  //
-  // Reads accounts from wcProvider.session object (no relay, no RPC).
-  // Returns the WalletConnection (address only) or null if no session.
-  // Does NOT call _finishConnect — caller must do that separately.
-  //
+  // ── Phase 1: Check if WC session exists — instant ─────────────────────────
   const checkSessionOnly = useCallback(
     async (
       wallet: 'metamask' | 'trust' | 'walletconnect'
     ): Promise<Awaited<ReturnType<typeof walletService.connectFromExistingSession>> | null> => {
       setError(null);
       try {
-        // Reconnect relay (5s timeout built-in)
         await walletService.reconnectRelay();
-
-        // Read accounts from session object — instant, no RPC
         const accounts = await walletService.tryGetAccounts();
         if (accounts.length === 0) return null;
-
-        // Build connection from session (address from session, network check 8s cap)
         return await walletService.connectFromExistingSession(wallet);
       } catch (err: any) {
         console.error('❌ checkSessionOnly:', err);
@@ -150,13 +132,6 @@ export function useWeb3Messenger() {
   );
 
   // ── Phase 2: Finish auth after session is confirmed ───────────────────────
-  //
-  // Calls _finishConnect (authService.authenticate → signMessage,
-  // xmtpService.initialize, contractService.loginWithFactory).
-  //
-  // signMessage has a 90s timeout — user has time to open MetaMask,
-  // find the request (Activity tab if needed), and confirm it.
-  //
   const finishConnectAuth = useCallback(
     async (
       connection: Awaited<ReturnType<typeof walletService.connectFromExistingSession>>
@@ -177,7 +152,6 @@ export function useWeb3Messenger() {
     [_finishConnect]
   );
 
-  // ── Legacy combined check (kept for compatibility) ────────────────────────
   const checkAndFinishSession = useCallback(
     async (wallet: 'metamask' | 'trust' | 'walletconnect'): Promise<boolean> => {
       const connection = await checkSessionOnly(wallet);
@@ -188,7 +162,7 @@ export function useWeb3Messenger() {
     [checkSessionOnly, finishConnectAuth]
   );
 
-  // ── AliTerra Wallet: address-only (read-only) connection ─────────────────
+  // ── AliTerra Wallet ───────────────────────────────────────────────────────
   const connectAliTerra = useCallback(
     async (addr: string) => {
       setIsConnecting(true);
@@ -229,50 +203,162 @@ export function useWeb3Messenger() {
   }, [setWallet, setE2EInitialized, setCurrentUser]);
 
   const cancelConnect = useCallback(async () => {
-    try {
-      await walletService.cancelConnect();
-    } catch (_) {}
+    try { await walletService.cancelConnect(); } catch (_) {}
     setIsConnecting(false);
     setError(null);
   }, []);
 
-  // ── Messaging ─────────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (recipient: string, message: string) => {
+  // ── Load XMTP conversations into store ────────────────────────────────────
+  const loadChats = useCallback(async () => {
+    if (!xmtpService.isInitialized()) return;
+    const store = useAppStore.getState();
+
     try {
-      const encrypted = await encryptionService.encrypt(message, recipient);
-      await xmtpService.sendMessage(recipient, encrypted.base64);
-      try {
-        const hash = await encryptionService.hashMessage(message);
-        await contractService.storeMessageHash(recipient, hash);
-      } catch (e) {
-        console.warn('⚠️ Хэш on-chain:', e);
+      store.clearMockData();
+
+      const conversations = await xmtpService.getConversations();
+      console.log('📬 XMTP диалогов:', conversations.length);
+
+      for (const conv of conversations) {
+        const peerAddr: string = (conv as any).peerAddress;
+        const chatId = peerAddr.toLowerCase();
+        const shortAddr = `${peerAddr.slice(0, 6)}…${peerAddr.slice(-4)}`;
+
+        let lastMessage: Message | undefined;
+        try {
+          const msgs = await (conv as any).messages({ limit: 1 });
+          if (msgs.length > 0) {
+            const m = msgs[0];
+            const rawContent = typeof m.content === 'string' ? m.content : '[media]';
+            const displayContent = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
+            lastMessage = {
+              id: m.id,
+              chatId,
+              senderId: m.senderAddress.toLowerCase(),
+              content: displayContent,
+              timestamp: m.sent,
+              status: 'read',
+              type: 'text',
+            };
+          }
+        } catch (_) {}
+
+        const chat: Chat = {
+          id: chatId,
+          type: 'private',
+          name: shortAddr,
+          avatar: peerAddr.slice(2, 4).toUpperCase(),
+          participants: [{
+            id: peerAddr,
+            name: shortAddr,
+            walletAddress: peerAddr,
+            isOnline: false,
+          }],
+          unreadCount: 0,
+          isPinned: false,
+          isMuted: false,
+          createdAt: new Date((conv as any).createdAt || Date.now()),
+          updatedAt: lastMessage?.timestamp || new Date(),
+          lastMessage,
+        };
+
+        store.upsertChat(chat);
       }
-    } catch (err: any) {
-      console.error('❌ Ошибка отправки:', err);
-      throw err;
+    } catch (e) {
+      console.error('❌ loadChats:', e);
     }
   }, []);
 
-  const getMessages = useCallback(async (recipient: string) => {
-    try {
-      const encryptedMessages = await xmtpService.getMessages(recipient);
-      const myAddress = authService.getAddress();
-      if (!myAddress) throw new Error('Не аутентифицирован');
-      const messages = await Promise.all(
-        encryptedMessages.map(async (msg: any) => {
-          try {
-            const decrypted = await encryptionService.decrypt(msg.content, msg.senderAddress);
-            return { id: msg.id, content: decrypted, sender: msg.senderAddress, timestamp: msg.sent };
-          } catch {
-            return null;
-          }
-        })
-      );
-      return messages.filter(Boolean);
-    } catch (err: any) {
-      console.error('❌ Ошибка получения:', err);
-      throw err;
+  // ── Start new chat with a wallet address ─────────────────────────────────
+  const startChat = useCallback((peerAddress: string): string => {
+    const store = useAppStore.getState();
+    const chatId = peerAddress.toLowerCase();
+    const shortAddr = `${peerAddress.slice(0, 6)}…${peerAddress.slice(-4)}`;
+
+    const existingChat = store.chats.find((c) => c.id === chatId);
+    if (!existingChat) {
+      const newChat: Chat = {
+        id: chatId,
+        type: 'private',
+        name: shortAddr,
+        avatar: peerAddress.slice(2, 4).toUpperCase(),
+        participants: [{
+          id: peerAddress,
+          name: shortAddr,
+          walletAddress: peerAddress,
+          isOnline: false,
+        }],
+        unreadCount: 0,
+        isPinned: false,
+        isMuted: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      store.upsertChat(newChat);
     }
+    return chatId;
+  }, []);
+
+  // ── Load messages for a specific chat into store ──────────────────────────
+  const loadMessages = useCallback(async (peerAddress: string, chatId: string): Promise<Message[]> => {
+    if (!xmtpService.isInitialized()) return [];
+    const store = useAppStore.getState();
+
+    const rawMessages = await xmtpService.getMessages(peerAddress, 50);
+    const myAddress = store.wallet.address?.toLowerCase();
+
+    const decoded = await Promise.all(
+      rawMessages.map(async (msg: any): Promise<Message> => {
+        let content = typeof msg.content === 'string' ? msg.content : '[media]';
+
+        // Try custom E2E decrypt if prefixed with 'v1:'
+        if (content.startsWith('v1:')) {
+          try {
+            const senderAddr = msg.senderAddress;
+            const peerForDecrypt = msg.senderAddress.toLowerCase() === myAddress
+              ? peerAddress
+              : senderAddr;
+            content = await encryptionService.decrypt(content.slice(3), peerForDecrypt);
+          } catch (_) {
+            content = '🔒 зашифровано';
+          }
+        }
+
+        return {
+          id: msg.id,
+          chatId,
+          senderId: msg.senderAddress.toLowerCase(),
+          content,
+          timestamp: msg.sent,
+          status: 'read' as const,
+          type: 'text' as const,
+        };
+      })
+    );
+
+    store.setMessages(chatId, decoded);
+    return decoded;
+  }, []);
+
+  // ── Send message via XMTP ─────────────────────────────────────────────────
+  const sendMessage = useCallback(async (peerAddress: string, content: string): Promise<string> => {
+    if (!xmtpService.isInitialized()) throw new Error('XMTP не инициализирован');
+
+    // Try custom E2E encrypt (XMTP already encrypts at protocol level, this is extra)
+    let payload = content;
+    try {
+      const encrypted = await encryptionService.encrypt(content, peerAddress);
+      payload = 'v1:' + encrypted.base64;
+    } catch (_) {
+      // Fallback to plain text (XMTP still encrypts it via protocol)
+    }
+
+    return xmtpService.sendMessage(peerAddress, payload);
+  }, []);
+
+  // ── Check if address can receive XMTP messages ────────────────────────────
+  const canMessage = useCallback(async (address: string): Promise<boolean> => {
+    return xmtpService.canMessage(address);
   }, []);
 
   const registerProfile = useCallback(async (nickname: string, avatarId: number) => {
@@ -299,7 +385,10 @@ export function useWeb3Messenger() {
     disconnect,
     cancelConnect,
     sendMessage,
-    getMessages,
+    loadMessages,
+    loadChats,
+    startChat,
+    canMessage,
     registerProfile,
     isConnecting,
     error,

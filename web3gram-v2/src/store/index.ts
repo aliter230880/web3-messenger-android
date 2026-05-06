@@ -22,8 +22,11 @@ interface AppState {
   toggleAvatarSelector: () => void;
   setAvatar: (avatarId: number) => void;
   setChats: (chats: Chat[]) => void;
+  upsertChat: (chat: Chat) => void;
   setActiveChat: (chatId: string | null) => void;
   addMessage: (chatId: string, message: Message) => void;
+  setMessages: (chatId: string, messages: Message[]) => void;
+  clearMockData: () => void;
   updateMessageStatus: (chatId: string, messageId: string, status: Message['status']) => void;
   setSearchQuery: (query: string) => void;
   toggleSettings: () => void;
@@ -34,7 +37,6 @@ interface AppState {
   deleteChat: (chatId: string) => void;
 }
 
-// ─── Read persisted values from localStorage on module load ──────────────────
 function _ls(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -50,7 +52,6 @@ const savedAvatarId = _ls('w3g_avatarId');
 const savedAddress = _ls('w3g_address');
 const isDark       = _ls('theme') === 'dark';
 
-// Apply dark mode immediately (before React renders)
 if (typeof document !== 'undefined') {
   if (isDark) {
     document.documentElement.classList.add('dark');
@@ -59,67 +60,29 @@ if (typeof document !== 'undefined') {
   }
 }
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-
 const mockUsers: User[] = [
-  { id: '1', name: 'Алексей Петров', avatar: 'AP', walletAddress: '0x742d...8a9f', isOnline: true },
-  { id: '2', name: 'Мария Иванова', avatar: 'МИ', walletAddress: '0x8b3c...4d2e', isOnline: false, lastSeen: new Date(Date.now() - 3600000) },
-  { id: '3', name: 'Crypto Trader', avatar: 'CT', walletAddress: '0x1a2b...7c8d', isOnline: true },
-  { id: '4', name: 'NFT Collector', avatar: 'NC', walletAddress: '0x9e8f...3a4b', isOnline: true },
-  { id: '5', name: 'DeFi Expert', avatar: 'DE', walletAddress: '0x5c6d...1e2f', isOnline: false, lastSeen: new Date(Date.now() - 7200000) },
+  { id: '1', name: 'Алексей Петров', avatar: 'AP', walletAddress: '0x742d35Cc6634C0532925a3b8D4C9C4e07B7A5c8f', isOnline: true },
+  { id: '2', name: 'Мария Иванова', avatar: 'МИ', walletAddress: '0x8b3c22Dd7745E1643036b8D5A4B8C6d7E8f92a1b', isOnline: false, lastSeen: new Date(Date.now() - 3600000) },
+  { id: '3', name: 'Crypto Trader', avatar: 'CT', walletAddress: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b', isOnline: true },
 ];
 
 const mockChats: Chat[] = [
   {
-    id: '1', type: 'private', name: 'Алексей Петров', avatar: 'AP',
+    id: 'mock-1', type: 'private', name: 'Алексей Петров', avatar: 'AP',
     participants: [mockUsers[0]], unreadCount: 2, isPinned: true, isMuted: false,
     createdAt: new Date(Date.now() - 86400000), updatedAt: new Date(),
-    lastMessage: { id: 'm1', chatId: '1', senderId: '1', content: 'Привет! Как дела с проектом?', timestamp: new Date(), status: 'delivered', type: 'text' },
-  },
-  {
-    id: '2', type: 'private', name: 'Мария Иванова', avatar: 'МИ',
-    participants: [mockUsers[1]], unreadCount: 0, isPinned: false, isMuted: false,
-    createdAt: new Date(Date.now() - 172800000), updatedAt: new Date(Date.now() - 3600000),
-    lastMessage: { id: 'm2', chatId: '2', senderId: 'current', content: 'Отправил тебе файлы', timestamp: new Date(Date.now() - 3600000), status: 'read', type: 'text' },
-  },
-  {
-    id: '3', type: 'group', name: 'Web3 Developers', avatar: 'WD',
-    participants: [mockUsers[2], mockUsers[3], mockUsers[4]], unreadCount: 15, isPinned: true, isMuted: false,
-    createdAt: new Date(Date.now() - 604800000), updatedAt: new Date(),
-    lastMessage: { id: 'm3', chatId: '3', senderId: '3', content: 'Кто хочет обсудить новый смарт-контракт?', timestamp: new Date(), status: 'delivered', type: 'text' },
-  },
-  {
-    id: '4', type: 'channel', name: 'Crypto News', avatar: 'CN',
-    participants: [], unreadCount: 5, isPinned: false, isMuted: true,
-    createdAt: new Date(Date.now() - 1209600000), updatedAt: new Date(Date.now() - 1800000),
-    lastMessage: { id: 'm4', chatId: '4', senderId: 'system', content: 'Bitcoin достиг нового ATH! 🚀', timestamp: new Date(Date.now() - 1800000), status: 'delivered', type: 'text' },
+    lastMessage: { id: 'm1', chatId: 'mock-1', senderId: '1', content: 'Привет! Подключи кошелёк для реального чата', timestamp: new Date(), status: 'delivered', type: 'text' },
   },
 ];
 
 const mockMessages: Record<string, Message[]> = {
-  '1': [
-    { id: 'm1-1', chatId: '1', senderId: '1', content: 'Привет!', timestamp: new Date(Date.now() - 7200000), status: 'read', type: 'text' },
-    { id: 'm1-2', chatId: '1', senderId: 'current', content: 'Привет, Алексей!', timestamp: new Date(Date.now() - 7100000), status: 'read', type: 'text' },
-    { id: 'm1-3', chatId: '1', senderId: '1', content: 'Как дела с проектом?', timestamp: new Date(Date.now() - 3600000), status: 'read', type: 'text' },
-    { id: 'm1-4', chatId: '1', senderId: 'current', content: 'Все отлично, почти закончил', timestamp: new Date(Date.now() - 3500000), status: 'read', type: 'text' },
-    { id: 'm1-5', chatId: '1', senderId: '1', content: 'Привет! Как дела с проектом?', timestamp: new Date(), status: 'delivered', type: 'text' },
-  ],
-  '2': [
-    { id: 'm2-1', chatId: '2', senderId: '2', content: 'Можешь отправить файлы?', timestamp: new Date(Date.now() - 7200000), status: 'read', type: 'text' },
-    { id: 'm2-2', chatId: '2', senderId: 'current', content: 'Отправил тебе файлы', timestamp: new Date(Date.now() - 3600000), status: 'read', type: 'text' },
-  ],
-  '3': [
-    { id: 'm3-1', chatId: '3', senderId: '3', content: 'Всем привет!', timestamp: new Date(Date.now() - 3600000), status: 'read', type: 'text' },
-    { id: 'm3-2', chatId: '3', senderId: '4', content: 'Привет!', timestamp: new Date(Date.now() - 3500000), status: 'read', type: 'text' },
-    { id: 'm3-3', chatId: '3', senderId: '3', content: 'Кто хочет обсудить новый смарт-контракт?', timestamp: new Date(), status: 'delivered', type: 'text' },
-  ],
-  '4': [
-    { id: 'm4-1', chatId: '4', senderId: 'system', content: 'Добро пожаловать в канал Crypto News!', timestamp: new Date(Date.now() - 86400000), status: 'read', type: 'text' },
-    { id: 'm4-2', chatId: '4', senderId: 'system', content: 'Bitcoin достиг нового ATH! 🚀', timestamp: new Date(Date.now() - 1800000), status: 'delivered', type: 'text' },
+  'mock-1': [
+    { id: 'm1-1', chatId: 'mock-1', senderId: '1', content: 'Привет!', timestamp: new Date(Date.now() - 7200000), status: 'read', type: 'text' },
+    { id: 'm1-2', chatId: 'mock-1', senderId: 'current', content: 'Это демо-режим. Подключи кошелёк чтобы начать реальный чат.', timestamp: new Date(Date.now() - 7100000), status: 'read', type: 'text' },
+    { id: 'm1-3', chatId: 'mock-1', senderId: '1', content: 'Подключи кошелёк для реального чата', timestamp: new Date(), status: 'delivered', type: 'text' },
   ],
 };
 
-// ─── Initial user — restored from localStorage if available ──────────────────
 const _initUser: User = {
   id: 'current',
   name: savedName || 'Пользователь',
@@ -129,12 +92,9 @@ const _initUser: User = {
   isOnline: true,
 };
 
-// ─── Initial wallet — restored as read-only if address was saved ──────────────
 const _initWallet: WalletState = savedAddress
   ? { isConnected: true, address: savedAddress, chainId: 137 }
   : { isConnected: false, address: null, chainId: null };
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const useAppStore = create<AppState>((set, get) => ({
   currentUser: _initUser,
@@ -153,7 +113,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     contractsReady: false,
   },
 
-  // ── setCurrentUser — also persists name + walletAddress ──────────────────
   setCurrentUser: (user) => {
     set({ currentUser: user });
     if (user) {
@@ -166,7 +125,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setE2EInitialized: (initialized) =>
     set((state) => ({ e2e: { ...state.e2e, isInitialized: initialized } })),
 
-  // ── setWallet — also persists address ────────────────────────────────────
   setWallet: (wallet) => {
     set({ wallet });
     if (wallet.address) {
@@ -191,7 +149,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleAvatarSelector: () =>
     set((state) => ({ isAvatarSelectorOpen: !state.isAvatarSelectorOpen })),
 
-  // ── setAvatar — also persists avatarId ───────────────────────────────────
   setAvatar: (avatarId) => {
     const { currentUser } = get();
     if (currentUser) {
@@ -203,6 +160,24 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setChats: (chats) => set({ chats }),
 
+  upsertChat: (chat) => {
+    const { chats } = get();
+    const idx = chats.findIndex((c) => c.id === chat.id);
+    if (idx >= 0) {
+      const updated = [...chats];
+      updated[idx] = { ...chats[idx], ...chat };
+      set({ chats: updated });
+    } else {
+      set({ chats: [chat, ...chats] });
+    }
+  },
+
+  setMessages: (chatId, msgs) =>
+    set((state) => ({ messages: { ...state.messages, [chatId]: msgs } })),
+
+  clearMockData: () =>
+    set({ chats: [], messages: {}, activeChatId: null }),
+
   setActiveChat: (chatId) => {
     if (chatId) get().markChatAsRead(chatId);
     set({ activeChatId: chatId });
@@ -210,8 +185,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addMessage: (chatId, message) => {
     const { messages, chats } = get();
+    const existing = messages[chatId] || [];
+    if (existing.some((m) => m.id === message.id)) return;
     set({
-      messages: { ...messages, [chatId]: [...(messages[chatId] || []), message] },
+      messages: { ...messages, [chatId]: [...existing, message] },
       chats: chats.map((chat) =>
         chat.id === chatId ? { ...chat, lastMessage: message, updatedAt: message.timestamp } : chat
       ),
