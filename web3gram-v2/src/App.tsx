@@ -13,49 +13,63 @@ import type { Message } from './types';
 
 export default function App() {
   const { activeChatId, setActiveChat, toggleSettings, toggleWalletModal } = useAppStore();
-  const isAvatarSelectorOpen = useAppStore((state) => state.isAvatarSelectorOpen);
-  const toggleAvatarSelector = useAppStore((state) => state.toggleAvatarSelector);
-  const setAvatar = useAppStore((state) => state.setAvatar);
-  const searchQuery = useAppStore((state) => state.searchQuery);
-  const setSearchQuery = useAppStore((state) => state.setSearchQuery);
-  const currentAvatarId = useAppStore((state) => state.currentUser?.avatarId);
+  const isAvatarSelectorOpen = useAppStore((s) => s.isAvatarSelectorOpen);
+  const toggleAvatarSelector = useAppStore((s) => s.toggleAvatarSelector);
+  const setAvatar            = useAppStore((s) => s.setAvatar);
+  const searchQuery          = useAppStore((s) => s.searchQuery);
+  const setSearchQuery       = useAppStore((s) => s.setSearchQuery);
+  const currentAvatarId      = useAppStore((s) => s.currentUser?.avatarId);
 
-  const { isConnecting, isConnected, address, connectAliTerra, loadChats, isE2EInitialized } = useWeb3Messenger();
+  const {
+    isConnecting, isConnected, address,
+    connectAliTerra, loadChats,
+    isE2EInitialized, xmtpReady,
+  } = useWeb3Messenger();
+
   const [showMobileList, setShowMobileList] = useState(true);
-  const [showNewChat, setShowNewChat] = useState(false);
+  const [showNewChat,    setShowNewChat]    = useState(false);
   const globalStreamRef = useRef<any>(null);
 
-  // ── AliTerra Wallet redirect-back callback ────────────────────────────────
+  // ── AliTerra redirect-back ────────────────────────────────────────────────
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params  = new URLSearchParams(window.location.search);
     const w3gAddr = params.get('w3g_addr');
     if (w3gAddr && w3gAddr.startsWith('0x') && w3gAddr.length >= 42) {
-      const clean = window.location.pathname + window.location.hash;
-      window.history.replaceState({}, '', clean);
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
       connectAliTerra(w3gAddr).catch(console.error);
     }
   }, []);
 
-  // ── When wallet connects: on-chain peer discovery + XMTP conversations + global stream ─────
+  // ── Trigger 1: Load chats as soon as wallet is connected ─────────────────
+  // Runs immediately — does NOT wait for XMTP to be ready.
+  // clearMockData() + on-chain peer discovery work without XMTP.
   useEffect(() => {
-    if (!isE2EInitialized) return;
+    if (!isConnected) return;
+    loadChats();
+  }, [isConnected]);
+
+  // ── Trigger 2: Start global XMTP stream once XMTP is ready ───────────────
+  // XMTP inits in background after wallet connect; xmtpReady flips to true then.
+  useEffect(() => {
+    if (!xmtpReady || !xmtpService.isInitialized()) return;
 
     let cancelled = false;
 
     (async () => {
+      // Re-load chats to pick up XMTP conversations now that client is ready
       await loadChats();
       if (cancelled) return;
 
       try {
         globalStreamRef.current = await xmtpService.subscribeToAllMessages((msg: any) => {
-          const store = useAppStore.getState();
-          const senderAddr: string = msg.senderAddress;
-          const myAddr = store.wallet.address?.toLowerCase();
+          const store      = useAppStore.getState();
+          const senderAddr = msg.senderAddress as string;
+          const myAddr     = store.wallet.address?.toLowerCase();
 
           if (senderAddr.toLowerCase() === myAddr) return;
 
-          const chatId = senderAddr.toLowerCase();
-          const rawContent = typeof msg.content === 'string' ? msg.content : '[media]';
+          const chatId        = senderAddr.toLowerCase();
+          const rawContent    = typeof msg.content === 'string' ? msg.content : '[media]';
           const displayContent = rawContent.startsWith('v1:') ? '🔒 зашифровано' : rawContent;
 
           const newMsg: Message = {
@@ -68,8 +82,7 @@ export default function App() {
             type: 'text',
           };
 
-          const existingChat = store.chats.find((c) => c.id === chatId);
-          if (!existingChat) {
+          if (!store.chats.find((c) => c.id === chatId)) {
             const shortAddr = `${senderAddr.slice(0, 6)}…${senderAddr.slice(-4)}`;
             store.upsertChat({
               id: chatId,
@@ -89,12 +102,18 @@ export default function App() {
           store.addMessage(chatId, newMsg);
         });
       } catch (e) {
-        console.warn('Global stream error:', e);
+        console.warn('Global XMTP stream error:', e);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [isE2EInitialized]);
+    return () => {
+      cancelled = true;
+      if (globalStreamRef.current) {
+        try { globalStreamRef.current.return?.(); } catch (_) {}
+        globalStreamRef.current = null;
+      }
+    };
+  }, [xmtpReady]);
 
   const handleChatSelect = (chatId: string) => {
     setActiveChat(chatId);
@@ -166,7 +185,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Chat List */}
           <ChatList onChatSelect={handleChatSelect} searchQuery={filteredQuery} />
         </div>
 
@@ -191,9 +209,11 @@ export default function App() {
                     Выберите чат для начала общения
                   </span>
                 </div>
-                {isE2EInitialized && (
+                {isConnected && (
                   <div className="mt-4">
-                    <p className="text-white/50 text-xs">XMTP подключён · E2E шифрование активно</p>
+                    <p className="text-white/50 text-xs">
+                      {xmtpReady ? 'XMTP подключён · E2E шифрование активно' : 'Подключение XMTP...'}
+                    </p>
                   </div>
                 )}
               </div>
