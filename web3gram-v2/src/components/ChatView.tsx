@@ -28,7 +28,7 @@ function getAvatarGradient(name: string) {
 
 export function ChatView({ chatId, onBack }: ChatViewProps) {
   const { chats, messages, addMessage, updateMessageStatus, currentUser, setMessages, loadPersistedMessages } = useAppStore();
-  const { sendMessage, loadMessages, isConnected, xmtpReady } = useWeb3Messenger();
+  const { sendMessage, loadMessages, isConnected, xmtpReady, xmtpAvailable } = useWeb3Messenger();
 
   const [inputValue, setInputValue] = useState('');
   const [showEmoji,  setShowEmoji]  = useState(false);
