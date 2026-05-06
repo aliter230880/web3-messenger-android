@@ -36,7 +36,7 @@ export default function App() {
     }
   }, []);
 
-  // ── When XMTP initializes: load conversations + global message stream ─────
+  // ── When wallet connects: on-chain peer discovery + XMTP conversations + global stream ─────
   useEffect(() => {
     if (!isE2EInitialized) return;
 
