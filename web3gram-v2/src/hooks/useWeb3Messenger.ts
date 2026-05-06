@@ -309,50 +309,67 @@ export function useWeb3Messenger() {
   }, []);
 
   // ── Load messages for a specific chat ─────────────────────────────────────
+  // Strategy:
+  //   1. Load from localStorage cache instantly → user sees previous messages
+  //   2. Fetch from XMTP → MERGE with cache (don't overwrite with fewer messages)
+  //   3. Result = union of both sources, deduped by ID, sorted by time
   const loadMessages = useCallback(async (peerAddress: string, chatId: string): Promise<Message[]> => {
-    // Сначала — из localStorage (мгновенно)
-    const store = useAppStore.getState();
-    const cached = store.loadPersistedMessages(chatId);
+    const store    = useAppStore.getState();
+    const cached   = store.loadPersistedMessages(chatId);
+
+    // Show cache immediately
     if (cached.length > 0) {
       store.setMessages(chatId, cached);
     }
 
-    // Потом — из XMTP (если доступен)
     if (!xmtpService.isInitialized()) return cached;
 
-    const rawMessages = await xmtpService.getMessages(peerAddress, 50);
-    const myAddress = store.wallet.address?.toLowerCase();
+    let xmtpMessages: Message[] = [];
+    try {
+      const rawMessages = await xmtpService.getMessages(peerAddress, 50);
+      const myAddress   = store.wallet.address?.toLowerCase();
 
-    const decoded = await Promise.all(
-      rawMessages.map(async (msg: any): Promise<Message> => {
-        let content = typeof msg.content === 'string' ? msg.content : '[media]';
+      xmtpMessages = await Promise.all(
+        rawMessages.map(async (msg: any): Promise<Message> => {
+          let content = typeof msg.content === 'string' ? msg.content : '[media]';
 
-        if (content.startsWith('v1:')) {
-          try {
-            const senderAddr   = msg.senderAddress;
-            const peerForDecrypt = msg.senderAddress.toLowerCase() === myAddress
-              ? peerAddress
-              : senderAddr;
-            content = await encryptionService.decrypt(content.slice(3), peerForDecrypt);
-          } catch (_) {
-            content = '🔒 зашифровано';
+          if (content.startsWith('v1:')) {
+            try {
+              const senderAddr     = msg.senderAddress;
+              const peerForDecrypt = senderAddr.toLowerCase() === myAddress
+                ? peerAddress
+                : senderAddr;
+              content = await encryptionService.decrypt(content.slice(3), peerForDecrypt);
+            } catch (_) {
+              content = '🔒 зашифровано';
+            }
           }
-        }
 
-        return {
-          id: msg.id,
-          chatId,
-          senderId: msg.senderAddress.toLowerCase(),
-          content,
-          timestamp: msg.sent,
-          status: 'read' as const,
-          type: 'text' as const,
-        };
-      })
+          return {
+            id:        msg.id,
+            chatId,
+            senderId:  msg.senderAddress.toLowerCase(),
+            content,
+            timestamp: msg.sent,
+            status:    'read' as const,
+            type:      'text' as const,
+          };
+        })
+      );
+    } catch (e) {
+      console.warn('⚠️ XMTP getMessages failed, using cache only:', e);
+      return cached;
+    }
+
+    // Merge: combine cache + XMTP, dedupe by ID, sort by time
+    const byId = new Map<string, Message>();
+    for (const m of [...cached, ...xmtpMessages]) byId.set(m.id, m);
+    const merged = Array.from(byId.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
-    store.setMessages(chatId, decoded);
-    return decoded;
+    store.setMessages(chatId, merged);
+    return merged;
   }, []);
 
   // ── Send message via XMTP ─────────────────────────────────────────────────
