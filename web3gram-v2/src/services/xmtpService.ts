@@ -26,32 +26,56 @@ export class XMTPService {
    * We try production only. If the XMTP network is unreachable (gRPC code 14),
    * we skip XMTP entirely instead of retrying with dev (which would request another signature).
    */
+  /**
+   * Race Client.create() against a timeout so we never hang forever.
+   * If XMTP is unreachable the caller gets an error in ≤ TIMEOUT_MS ms.
+   */
+  private static async _createWithTimeout(
+    signer: Signer,
+    opts: { env: 'production' | 'dev' },
+    timeoutMs = 5000
+  ): Promise<Client> {
+    return Promise.race([
+      Client.create(signer, opts),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`XMTP timeout (${timeoutMs}ms) [${opts.env}]`)), timeoutMs)
+      ),
+    ]);
+  }
+
   async initialize(signer: Signer): Promise<void> {
+    // Try production first with 5-second timeout
     try {
-      this.client = await Client.create(signer, { env: 'production' });
+      this.client = await XMTPService._createWithTimeout(signer, { env: 'production' }, 5000);
       this._env = 'production';
       console.log('✅ XMTP [production]:', this.client.address);
+      return;
     } catch (error: any) {
-      const code = error?.code;
       const msg = String(error?.message ?? '');
+      const isNetworkIssue =
+        error?.code === 14 ||
+        msg.includes('UNAVAILABLE') ||
+        msg.includes('network') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('timeout');
 
-      if (code === 14 || msg.includes('UNAVAILABLE') || msg.includes('network') || msg.includes('Failed to fetch')) {
-        // Network issue — try dev as a last resort WITH THE SAME KEYS already in IndexedDB
-        // (no new signature needed if keys were already generated above)
-        try {
-          this.client = await Client.create(signer, { env: 'dev' });
-          this._env = 'dev';
-          console.log('✅ XMTP [dev fallback]:', this.client.address);
-          return;
-        } catch (devErr: any) {
-          console.warn('⚠️ XMTP dev также недоступен — работаем без XMTP');
-          throw devErr;
-        }
+      if (!isNetworkIssue) {
+        // Signature rejected or unrecoverable error
+        console.error('❌ XMTP init error:', error);
+        throw error;
       }
 
-      // User rejected signature or other auth error — propagate
-      console.error('❌ XMTP init error:', error);
-      throw error;
+      console.warn('⚠️ XMTP production недоступен, пробуем dev:', msg);
+    }
+
+    // Dev fallback — 4-second timeout
+    try {
+      this.client = await XMTPService._createWithTimeout(signer, { env: 'dev' }, 4000);
+      this._env = 'dev';
+      console.log('✅ XMTP [dev fallback]:', this.client.address);
+    } catch (devErr: any) {
+      console.warn('⚠️ XMTP dev также недоступен — работаем без XMTP:', devErr?.message);
+      throw devErr;
     }
   }
 
