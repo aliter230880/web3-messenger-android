@@ -37,11 +37,14 @@ const HYBRID_MESSENGER_ABI = [
   'event ConversationCreated(address indexed userA, address indexed userB, bytes32 conversationKey)',
 ];
 
+// ABI совпадает с DEFAULT_MESSAGE_CONTRACT = 0xA07B784e6e1Ca3CA00084448a0b4957005C5ACEb
+// Это "новый" контракт из рабочего репо aliter230880/web3-messenger
 const MESSAGE_STORAGE_ABI = [
-  'function storeMessageHash(address recipient, bytes32 messageHash, uint256 timestamp) external',
-  'function getMessageHashes(address userA, address userB, uint256 startIndex, uint256 count) external view returns (bytes32[], uint256)',
-  'function messageHashCount(address a, address b) external view returns (uint256)',
-  'event MessageHashStored(address indexed sender, address indexed recipient, bytes32 messageHash, uint256 timestamp)',
+  'function sendMessage(address recipient, string text) external',
+  'function getConversation(address userA, address userB, uint256 startIndex, uint256 count) view returns (tuple(address sender, address recipient, string text, uint256 timestamp)[], uint256)',
+  'function messageCount(address a, address b) view returns (uint256)',
+  'event MessageSent(address indexed sender, address indexed recipient, uint256 timestamp)',
+  'event ChatDiscovered(address indexed user, address indexed peer)',
 ];
 
 const KEY_ESCROW_ABI = [
@@ -417,33 +420,79 @@ export class ContractService {
   }
 
   /**
-   * Получение хэшей сообщений
+   * Поиск собеседников через события MessageSent в MessageStorage.
+   *
+   * Аналог discoverChats() из рабочего репо aliter230880/web3-messenger:
+   * сканирует события MessageSent(me→*) и MessageSent(*→me) за последние
+   * SCAN_BLOCKS_BACK блоков и возвращает уникальный список адресов.
+   *
+   * Не требует XMTP — работает для любого Ethereum-адреса.
    */
-  async getMessageHashes(
-    userA: string,
-    userB: string,
-    startIndex: number = 0,
-    count: number = 50
-  ): Promise<{ hashes: string[]; total: number }> {
-    if (!this.messageStorageContract) {
-      throw new Error('Контракты не инициализированы');
-    }
+  async discoverChatPeers(myAddress: string): Promise<string[]> {
+    if (!this.messageStorageContract || !this.provider) return [];
+
+    const SCAN_BLOCKS_BACK = 50_000;
+    const BATCH_SIZE = 10_000;
 
     try {
-      const result = await this.messageStorageContract.getMessageHashes(
-        userA,
-        userB,
-        startIndex,
-        count
-      );
-      
-      return {
-        hashes: result[0],
-        total: result[1].toNumber(),
-      };
-    } catch (error) {
-      console.error('❌ Ошибка получения хэшей:', error);
-      return { hashes: [], total: 0 };
+      const currentBlock = await this.provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - SCAN_BLOCKS_BACK);
+
+      const contract = this.messageStorageContract;
+      const peers = new Set<string>();
+      const myLower = myAddress.toLowerCase();
+
+      for (let from = fromBlock; from <= currentBlock; from += BATCH_SIZE) {
+        const to = Math.min(from + BATCH_SIZE - 1, currentBlock);
+        try {
+          const [sentEvents, recvEvents] = await Promise.all([
+            contract.queryFilter(contract.filters.MessageSent(myAddress, null), from, to),
+            contract.queryFilter(contract.filters.MessageSent(null, myAddress), from, to),
+          ]);
+
+          sentEvents.forEach((e: any) => {
+            try { peers.add(e.args.recipient.toLowerCase()); } catch (_) {}
+          });
+          recvEvents.forEach((e: any) => {
+            try { peers.add(e.args.sender.toLowerCase()); } catch (_) {}
+          });
+
+          // Событие ChatDiscovered (дополнительно, если есть)
+          if (contract.filters.ChatDiscovered) {
+            try {
+              const discovered = await contract.queryFilter(
+                contract.filters.ChatDiscovered(myAddress, null), from, to
+              );
+              discovered.forEach((e: any) => {
+                try { peers.add(e.args.peer.toLowerCase()); } catch (_) {}
+              });
+            } catch (_) {}
+          }
+        } catch (batchErr) {
+          console.warn(`⚠️ discoverChats: batch ${from}-${to} failed`);
+        }
+      }
+
+      peers.delete(myLower);
+      const result = Array.from(peers);
+      console.log(`🔍 discoverChatPeers: найдено ${result.length} собеседников`);
+      return result;
+    } catch (e) {
+      console.error('❌ discoverChatPeers:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Получение профиля из IdentityV2 (nickname + avatarId).
+   */
+  async getProfileV2(address: string): Promise<{ nickname: string; avatarId: number; exists: boolean }> {
+    if (!this.identityV2Contract) return { nickname: '', avatarId: 0, exists: false };
+    try {
+      const p = await this.identityV2Contract.getProfile(address);
+      return { nickname: p[0] as string, avatarId: Number(p[1]), exists: p[2] as boolean };
+    } catch (_) {
+      return { nickname: '', avatarId: 0, exists: false };
     }
   }
 
