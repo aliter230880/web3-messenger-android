@@ -47,7 +47,10 @@ export interface WalletState {
 export interface E2EState {
   isInitialized: boolean;
   publicKey?: string;
+  /** init attempt finished → UI unblocked (set even on failure) */
   xmtpReady: boolean;
+  /** XMTP actually connected → messages will be delivered to recipient */
+  xmtpAvailable: boolean;
   contractsReady: boolean;
 }
 
