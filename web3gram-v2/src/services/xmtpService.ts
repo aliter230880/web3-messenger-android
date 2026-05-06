@@ -16,15 +16,31 @@ export class XMTPService {
   }
 
   async initialize(signer: Signer): Promise<void> {
-    try {
-      this.client = await Client.create(signer, {
-        env: 'production',
-      });
-      console.log('✅ XMTP клиент инициализирован:', this.client.address);
-    } catch (error) {
-      console.error('❌ Ошибка инициализации XMTP:', error);
-      throw error;
+    // Try production first, fallback to dev on network errors (gRPC code 14 = UNAVAILABLE)
+    const envs: Array<'production' | 'dev'> = ['production', 'dev'];
+    let lastError: unknown;
+
+    for (const env of envs) {
+      try {
+        this.client = await Client.create(signer, { env });
+        this._env = env;
+        console.log(`✅ XMTP клиент инициализирован [${env}]:`, this.client.address);
+        return;
+      } catch (error: any) {
+        lastError = error;
+        const code = error?.code ?? error?.details?.code;
+        // gRPC UNAVAILABLE (14) or connection issues — try next env
+        if (code === 14 || String(error?.message).includes('UNAVAILABLE') || String(error?.message).includes('network')) {
+          console.warn(`⚠️ XMTP ${env} недоступен, пробуем следующий...`);
+          continue;
+        }
+        // Other error (e.g. user rejected signature) — rethrow immediately
+        throw error;
+      }
     }
+
+    console.error('❌ XMTP недоступен на всех серверах:', lastError);
+    throw lastError;
   }
 
   isInitialized(): boolean {
@@ -102,15 +118,26 @@ export class XMTPService {
   }
 
   async canMessage(address: string): Promise<boolean> {
-    if (!this.client) {
-      try {
-        return Client.canMessage(address, { env: 'production' });
-      } catch { return false; }
-    }
+    const envToTry = this._env ?? 'production';
     try {
-      return Client.canMessage(address, { env: 'production' });
-    } catch { return false; }
+      return await Client.canMessage(address, { env: envToTry });
+    } catch (error: any) {
+      const code = error?.code ?? error?.details?.code;
+      // Network error — assume user can receive messages (don't block chat)
+      if (code === 14 || String(error?.message).includes('UNAVAILABLE')) {
+        return true;
+      }
+      // Try fallback env
+      try {
+        const fallback: 'production' | 'dev' = envToTry === 'production' ? 'dev' : 'production';
+        return await Client.canMessage(address, { env: fallback });
+      } catch {
+        return true; // Network issues — don't block the user
+      }
+    }
   }
+
+  private _env: 'production' | 'dev' = 'production';
 
   async disconnect() {
     if (this._globalStream) {

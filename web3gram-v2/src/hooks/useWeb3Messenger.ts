@@ -41,12 +41,9 @@ export function useWeb3Messenger() {
       const authData = await authService.authenticate(signer);
 
       try {
-        await Promise.race([
-          xmtpService.initialize(signer),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('XMTP timeout')), 10_000)
-          ),
-        ]);
+        // No timeout here — Client.create() needs a wallet signature
+        // which requires user interaction; cutting it off means keys never register
+        await xmtpService.initialize(signer);
       } catch (e) {
         console.warn('⚠️ XMTP (skipped):', e);
       }

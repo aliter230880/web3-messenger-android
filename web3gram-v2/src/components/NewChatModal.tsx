@@ -17,7 +17,7 @@ function getAvatarGradient(name: string) {
   return AVATAR_GRADIENTS[name.charCodeAt(0) % AVATAR_GRADIENTS.length];
 }
 
-type CheckState = 'idle' | 'checking' | 'ok' | 'error';
+type CheckState = 'idle' | 'checking' | 'ok' | 'warn';
 
 export function NewChatModal({ onClose }: NewChatModalProps) {
   const { chats, setActiveChat } = useAppStore();
@@ -25,7 +25,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
 
   const [addressInput, setAddressInput] = useState('');
   const [checkState, setCheckState] = useState<CheckState>('idle');
-  const [checkError, setCheckError] = useState('');
+  const [checkWarn, setCheckWarn] = useState('');
 
   const isValidAddress = /^0x[0-9a-fA-F]{40}$/.test(addressInput.trim());
   const existingChats = chats.filter((c) => !c.id.startsWith('mock-'));
@@ -34,18 +34,19 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
     const addr = addressInput.trim();
     if (!isValidAddress) return;
     setCheckState('checking');
-    setCheckError('');
+    setCheckWarn('');
     try {
       const ok = await canMessage(addr);
       if (ok) {
         setCheckState('ok');
       } else {
-        setCheckState('error');
-        setCheckError('Этот адрес ещё не зарегистрирован в XMTP. Попросите собеседника войти в Web3 Messenger.');
+        // Not blocking — just a soft warning, user can still start chat
+        setCheckState('warn');
+        setCheckWarn('Адрес пока не найден в сети XMTP. Вы всё равно можете начать чат — сообщения дойдут, когда собеседник откроет приложение.');
       }
-    } catch (e: any) {
-      setCheckState('error');
-      setCheckError(e?.message || 'Ошибка проверки');
+    } catch (_) {
+      // Any error — treat as "unknown", don't block
+      setCheckState('ok');
     }
   }, [addressInput, isValidAddress, canMessage]);
 
@@ -114,13 +115,13 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
               {checkState === 'ok' && (
                 <div className="flex items-center gap-2 mt-3 text-emerald-600">
                   <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                  <span className="text-sm">Адрес зарегистрирован в XMTP, можно писать!</span>
+                  <span className="text-sm">Адрес найден в сети XMTP — можно писать!</span>
                 </div>
               )}
-              {checkState === 'error' && (
-                <div className="flex items-start gap-2 mt-3 text-red-500">
+              {checkState === 'warn' && (
+                <div className="flex items-start gap-2 mt-3 text-amber-600">
                   <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span className="text-sm">{checkError}</span>
+                  <span className="text-sm">{checkWarn}</span>
                 </div>
               )}
               {!isE2EInitialized && (
@@ -129,13 +130,13 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                 </p>
               )}
 
-              {/* Buttons */}
+              {/* Buttons — always show "Начать чат" when address is valid */}
               <div className="flex gap-2 mt-3">
-                {checkState !== 'ok' ? (
+                {checkState === 'idle' || checkState === 'warn' ? (
                   <button
                     onClick={handleCheck}
                     disabled={!isValidAddress || checkState === 'checking'}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#3390ec] hover:bg-[#2b7ecc] disabled:opacity-40 text-white rounded-xl text-sm font-medium transition-colors"
+                    className="flex items-center justify-center gap-2 py-2.5 px-4 bg-gray-200 hover:bg-gray-300 disabled:opacity-40 text-gray-700 rounded-xl text-sm font-medium transition-colors"
                   >
                     {checkState === 'checking' ? (
                       <Loader className="w-4 h-4 animate-spin" />
@@ -144,22 +145,15 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                     )}
                     {checkState === 'checking' ? 'Проверяем...' : 'Проверить'}
                   </button>
-                ) : (
+                ) : null}
+                {/* Primary action — always visible when address is valid */}
+                {isValidAddress && checkState !== 'checking' && (
                   <button
                     onClick={handleStartChat}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-medium transition-colors"
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#3390ec] hover:bg-[#2b7ecc] text-white rounded-xl text-sm font-medium transition-colors"
                   >
                     <MessageSquarePlus className="w-4 h-4" />
                     Начать чат
-                  </button>
-                )}
-                {/* Skip check — start anyway (for demo / same-client) */}
-                {isValidAddress && checkState !== 'ok' && (
-                  <button
-                    onClick={handleStartChat}
-                    className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
-                  >
-                    Всё равно открыть
                   </button>
                 )}
               </div>
