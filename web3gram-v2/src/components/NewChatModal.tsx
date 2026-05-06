@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Search, ArrowLeft, CheckCircle, XCircle, Loader, MessageSquarePlus } from 'lucide-react';
+import { ArrowLeft, MessageSquarePlus } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useWeb3Messenger } from '../hooks/useWeb3Messenger';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,45 +17,22 @@ function getAvatarGradient(name: string) {
   return AVATAR_GRADIENTS[name.charCodeAt(0) % AVATAR_GRADIENTS.length];
 }
 
-type CheckState = 'idle' | 'checking' | 'ok' | 'warn';
-
 export function NewChatModal({ onClose }: NewChatModalProps) {
   const { chats, setActiveChat } = useAppStore();
-  const { canMessage, startChat, isE2EInitialized } = useWeb3Messenger();
+  const { startChat, isE2EInitialized } = useWeb3Messenger();
 
   const [addressInput, setAddressInput] = useState('');
-  const [checkState, setCheckState] = useState<CheckState>('idle');
-  const [checkWarn, setCheckWarn] = useState('');
 
   const isValidAddress = /^0x[0-9a-fA-F]{40}$/.test(addressInput.trim());
   const existingChats = chats.filter((c) => !c.id.startsWith('mock-'));
 
-  const handleCheck = useCallback(async () => {
-    const addr = addressInput.trim();
-    if (!isValidAddress) return;
-    setCheckState('checking');
-    setCheckWarn('');
-    try {
-      const ok = await canMessage(addr);
-      if (ok) {
-        setCheckState('ok');
-      } else {
-        // Not blocking — just a soft warning, user can still start chat
-        setCheckState('warn');
-        setCheckWarn('Адрес пока не найден в сети XMTP. Вы всё равно можете начать чат — сообщения дойдут, когда собеседник откроет приложение.');
-      }
-    } catch (_) {
-      // Any error — treat as "unknown", don't block
-      setCheckState('ok');
-    }
-  }, [addressInput, isValidAddress, canMessage]);
-
   const handleStartChat = useCallback(() => {
     const addr = addressInput.trim();
+    if (!isValidAddress) return;
     const chatId = startChat(addr);
     setActiveChat(chatId);
     onClose();
-  }, [addressInput, startChat, setActiveChat, onClose]);
+  }, [addressInput, isValidAddress, startChat, setActiveChat, onClose]);
 
   const handleSelectExisting = (chat: typeof chats[0]) => {
     setActiveChat(chat.id);
@@ -102,60 +79,32 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                   type="text"
                   placeholder="0x..."
                   value={addressInput}
-                  onChange={(e) => {
-                    setAddressInput(e.target.value);
-                    setCheckState('idle');
-                    setCheckError('');
-                  }}
+                  onChange={(e) => setAddressInput(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 focus:bg-white focus:ring-2 focus:ring-[#3390ec] rounded-xl text-gray-900 placeholder-gray-400 outline-none transition-all font-mono text-sm"
                 />
               </div>
 
-              {/* Status */}
-              {checkState === 'ok' && (
-                <div className="flex items-center gap-2 mt-3 text-emerald-600">
-                  <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                  <span className="text-sm">Адрес найден в сети XMTP — можно писать!</span>
-                </div>
-              )}
-              {checkState === 'warn' && (
-                <div className="flex items-start gap-2 mt-3 text-amber-600">
-                  <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span className="text-sm">{checkWarn}</span>
-                </div>
-              )}
               {!isE2EInitialized && (
                 <p className="text-xs text-amber-600 mt-2">
                   Подключи кошелёк, чтобы отправлять реальные сообщения
                 </p>
               )}
 
-              {/* Buttons — always show "Начать чат" when address is valid */}
-              <div className="flex gap-2 mt-3">
-                {checkState === 'idle' || checkState === 'warn' ? (
-                  <button
-                    onClick={handleCheck}
-                    disabled={!isValidAddress || checkState === 'checking'}
-                    className="flex items-center justify-center gap-2 py-2.5 px-4 bg-gray-200 hover:bg-gray-300 disabled:opacity-40 text-gray-700 rounded-xl text-sm font-medium transition-colors"
-                  >
-                    {checkState === 'checking' ? (
-                      <Loader className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Search className="w-4 h-4" />
-                    )}
-                    {checkState === 'checking' ? 'Проверяем...' : 'Проверить'}
-                  </button>
-                ) : null}
-                {/* Primary action — always visible when address is valid */}
-                {isValidAddress && checkState !== 'checking' && (
-                  <button
-                    onClick={handleStartChat}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-[#3390ec] hover:bg-[#2b7ecc] text-white rounded-xl text-sm font-medium transition-colors"
-                  >
-                    <MessageSquarePlus className="w-4 h-4" />
-                    Начать чат
-                  </button>
-                )}
+              {isValidAddress && (
+                <p className="text-xs text-emerald-600 mt-2">
+                  ✓ Адрес корректный — можно начинать чат
+                </p>
+              )}
+
+              <div className="mt-3">
+                <button
+                  onClick={handleStartChat}
+                  disabled={!isValidAddress}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-[#3390ec] hover:bg-[#2b7ecc] disabled:opacity-40 text-white rounded-xl text-sm font-medium transition-colors"
+                >
+                  <MessageSquarePlus className="w-4 h-4" />
+                  Начать чат
+                </button>
               </div>
             </div>
 
@@ -189,7 +138,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
               <div className="flex flex-col items-center justify-center py-16 text-gray-400 px-8">
                 <MessageSquarePlus className="w-12 h-12 mb-4 opacity-40" />
                 <p className="text-sm text-center">
-                  Введи Ethereum-адрес собеседника выше, чтобы начать зашифрованный чат
+                  Введи Ethereum-адрес собеседника выше, чтобы начать чат
                 </p>
               </div>
             )}
