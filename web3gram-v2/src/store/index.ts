@@ -18,6 +18,7 @@ interface AppState {
   toggleDarkMode: () => void;
   setE2EInitialized: (initialized: boolean) => void;
   setXmtpReady: (ready: boolean) => void;
+  setXmtpAvailable: (available: boolean) => void;
   setWallet: (wallet: WalletState) => void;
   toggleAvatarSelector: () => void;
   setAvatar: (avatarId: number) => void;
@@ -152,6 +153,7 @@ const _initWallet: WalletState = savedAddress
 const _initE2E: E2EState = {
   isInitialized: !!savedAddress,
   xmtpReady: false,
+  xmtpAvailable: false,
   contractsReady: false,
 };
 
@@ -183,6 +185,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setXmtpReady: (ready) =>
     set((s) => ({ e2e: { ...s.e2e, xmtpReady: ready } })),
 
+  setXmtpAvailable: (available) =>
+    set((s) => ({ e2e: { ...s.e2e, xmtpAvailable: available } })),
+
   setWallet: (wallet) => {
     set({ wallet });
     if (wallet.address) {
@@ -196,7 +201,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } else {
       _lsDel('w3g_address');
-      set({ chats: mockChats, messages: {}, activeChatId: null, e2e: { isInitialized: false, xmtpReady: false, contractsReady: false } });
+      set({ chats: mockChats, messages: {}, activeChatId: null, e2e: { isInitialized: false, xmtpReady: false, xmtpAvailable: false, contractsReady: false } });
     }
   },
 
