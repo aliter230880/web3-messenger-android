@@ -1,0 +1,15 @@
+<!-- Paste this inside <manifest> in android/app/src/main/AndroidManifest.xml -->
+<queries>
+  <intent>
+    <action android:name="android.intent.action.VIEW" />
+    <data android:scheme="metamask" />
+  </intent>
+  <intent>
+    <action android:name="android.intent.action.VIEW" />
+    <data android:scheme="trust" />
+  </intent>
+  <intent>
+    <action android:name="android.intent.action.VIEW" />
+    <data android:scheme="wc" />
+  </intent>
+</queries>
