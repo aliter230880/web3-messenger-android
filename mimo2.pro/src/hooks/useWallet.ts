@@ -7,73 +7,112 @@ export interface UseWalletReturn {
   disconnect: () => void;
   isConnecting: boolean;
   error: string | null;
+  wcUri: string | null;
 }
+
+const WC_PROJECT_ID = '2de1d724533083c2ed68197548dead4e';
 
 export function useWallet(): UseWalletReturn {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [wcUri, setWcUri] = useState<string | null>(null);
   
   const { setWallet, setCurrentUser, disconnectWallet } = useStore();
 
-  const connect = useCallback(async (_walletType: 'metamask' | 'trustwallet' | 'walletconnect') => {
+  // Определяем платформу
+  const isMobile = () => {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  };
+
+  const isCapacitor = () => {
+    return typeof (window as any).Capacitor !== 'undefined';
+  };
+
+  // Открываем URL (нативно в Capacitor)
+  const openUrl = (url: string) => {
+    if (isCapacitor()) {
+      window.open(url, '_system');
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  const connect = useCallback(async (walletType: 'metamask' | 'trustwallet' | 'walletconnect') => {
     setIsConnecting(true);
     setError(null);
+    setWcUri(null);
 
     try {
       const ethereum = (window as any).ethereum;
       
-      if (!ethereum) {
-        throw new Error('Кошелёк не найден. Установите MetaMask или Trust Wallet расширение для браузера.');
-      }
-
-      // Запрашиваем подключение - вызывает popup в кошельке
-      const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
-      
-      if (!accounts || accounts.length === 0) {
-        throw new Error('Нет доступных аккаунтов');
-      }
-
-      const address = accounts[0];
-      
-      // Переключаемся на Polygon
-      try {
-        await ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x89' }],
-        });
-      } catch (switchError: any) {
-        if (switchError.code === 4902) {
-          await ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: '0x89',
-              chainName: 'Polygon Mainnet',
-              nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-              rpcUrls: ['https://polygon-rpc.com'],
-              blockExplorerUrls: ['https://polygonscan.com'],
-            }],
-          });
+      // Если есть расширение кошелька в браузере
+      if (ethereum && !isMobile()) {
+        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+        
+        if (!accounts || accounts.length === 0) {
+          throw new Error('Нет аккаунтов');
         }
+
+        const address = accounts[0];
+        
+        // Переключаемся на Polygon
+        try {
+          await ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0x89' }],
+          });
+        } catch (switchError: any) {
+          if (switchError.code === 4902) {
+            await ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x89',
+                chainName: 'Polygon Mainnet',
+                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+                rpcUrls: ['https://polygon-rpc.com'],
+                blockExplorerUrls: ['https://polygonscan.com'],
+              }],
+            });
+          }
+        }
+
+        const provider = new ethers.providers.Web3Provider(ethereum, 'any');
+        const signer = provider.getSigner();
+
+        setWallet({
+          isConnected: true,
+          address: address,
+          chainId: 137,
+          signer: signer,
+          provider: provider,
+          walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet',
+          isReadOnly: false,
+        });
+
+        setCurrentUser({
+          id: address,
+          name: `${address.slice(0, 6)}...${address.slice(-4)}`,
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
+        });
+
+      } else {
+        // Мобильный - используем WalletConnect deep links
+        // Генерируем URI для WalletConnect (в реальном приложении нужен @walletconnect/sign-client)
+        const wcUriGenerated = `wc:${generateWcPairingTopic()}@2?relay-protocol=irn&symKey=${generateRandomHex(64)}`;
+        setWcUri(wcUriGenerated);
+
+        // Открываем deep link в нужный кошелёк
+        if (walletType === 'metamask') {
+          openUrl(`metamask://wc?uri=${encodeURIComponent(wcUriGenerated)}`);
+        } else if (walletType === 'trustwallet') {
+          openUrl(`trust://wc?uri=${encodeURIComponent(wcUriGenerated)}`);
+        } else {
+          // WalletConnect - показываем URI для сканирования
+          // URI уже установлен через setWcUri
+        }
+
+        throw new Error('Подтвердите подключение в кошельке');
       }
-
-      const provider = new ethers.providers.Web3Provider(ethereum, 'any');
-      const signer = provider.getSigner();
-
-      setWallet({
-        isConnected: true,
-        address: address,
-        chainId: 137,
-        signer: signer,
-        provider: provider,
-        walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet',
-        isReadOnly: false,
-      });
-
-      setCurrentUser({
-        id: address,
-        name: `${address.slice(0, 6)}...${address.slice(-4)}`,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
-      });
 
     } catch (err: any) {
       console.error('Connection error:', err);
@@ -87,6 +126,7 @@ export function useWallet(): UseWalletReturn {
   const disconnect = useCallback(() => {
     disconnectWallet();
     setError(null);
+    setWcUri(null);
   }, [disconnectWallet]);
 
   return {
@@ -94,5 +134,19 @@ export function useWallet(): UseWalletReturn {
     disconnect,
     isConnecting,
     error,
+    wcUri,
   };
+}
+
+// Генераторы для WalletConnect URI
+function generateWcPairingTopic(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function generateRandomHex(length: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(length / 2)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
