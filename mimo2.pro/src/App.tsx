@@ -24,8 +24,7 @@ import {
   ChevronRight,
   Loader2,
   Copy,
-  CheckCircle,
-  ExternalLink
+  CheckCircle
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
@@ -102,16 +101,9 @@ const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
   </svg>
 );
 
-// WalletConnect SVG Icon
-const WalletConnectIcon = ({ className = "w-6 h-6" }) => (
-  <svg className={className} viewBox="0 0 24 18" fill="none">
-    <path d="M4.915 5.673C7.55 3.077 11.826 3.077 14.462 5.673L14.818 6.024C14.982 6.185 15.064 6.413 15.064 6.638C15.064 6.863 14.982 7.091 14.818 7.252L13.747 8.308C13.583 8.469 13.351 8.549 13.119 8.549C12.887 8.549 12.655 8.469 12.491 8.308L11.989 7.813C10.533 6.379 8.175 6.379 6.719 7.813L6.185 8.339C6.021 8.5 5.789 8.58 5.557 8.58C5.325 8.58 5.093 8.5 4.929 8.339L3.858 7.283C3.694 7.122 3.612 6.894 3.612 6.669C3.612 6.444 3.694 6.216 3.858 6.055L4.915 5.673ZM16.953 5.673L18.01 6.055C18.174 6.216 18.256 6.444 18.256 6.669C18.256 6.894 18.174 7.122 18.01 7.283L16.939 8.339C16.775 8.5 16.543 8.58 16.311 8.58C16.079 8.58 15.847 8.5 15.683 8.339L15.149 7.813C13.693 6.379 11.335 6.379 9.879 7.813L9.377 8.308C9.213 8.469 8.981 8.549 8.749 8.549C8.517 8.549 8.285 8.469 8.121 8.308L7.05 7.252C6.886 7.091 6.804 6.863 6.804 6.638C6.804 6.413 6.886 6.185 7.05 6.024L7.406 5.673C10.041 3.077 14.317 3.077 16.953 5.673ZM22.734 3.453L17.943 0.202C17.348 -0.112 16.626 -0.069 16.071 0.304L14.675 1.249C14.387 1.438 14.043 1.534 13.692 1.521C13.341 1.534 12.998 1.438 12.71 1.249L11.406 0.372C10.846 0.003 10.126 -0.038 9.534 0.273L4.743 3.453C3.665 4.179 2.998 5.418 3.001 6.742V11.259C2.998 12.583 3.665 13.822 4.743 14.548L9.534 17.728C10.126 18.039 10.846 17.998 11.406 17.629L12.71 16.752C12.998 16.563 13.341 16.467 13.692 16.48C14.043 16.467 14.387 16.563 14.675 16.752L16.071 17.697C16.626 18.07 17.348 18.113 17.943 17.799L22.734 14.548C23.812 13.822 24.479 12.583 24.476 11.259V6.742C24.479 5.418 23.812 4.179 22.734 3.453Z" fill="#3B99FC"/>
-  </svg>
-);
-
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, wcUri, error: walletError } = useWallet();
+  const { connect, disconnect, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
@@ -120,7 +112,7 @@ export default function App() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'qr' | 'success'>('picker');
+  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'success'>('picker');
   const [localChats, setLocalChats] = useState<Chat[]>(initialChats);
   const [localMessages, setLocalMessages] = useState<Record<string, Message[]>>(initialMessages);
   const [copied, setCopied] = useState(false);
@@ -135,13 +127,6 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentMessages]);
-
-  // Show QR when WC URI is available
-  useEffect(() => {
-    if (wcUri && walletScreen === 'connecting') {
-      setWalletScreen('qr');
-    }
-  }, [wcUri, walletScreen]);
 
   useEffect(() => {
     if (walletError) {
@@ -539,7 +524,7 @@ export default function App() {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-semibold text-[#f0f6fc]">
-                    {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'qr' ? 'Откройте кошелёк' : 'Подключить кошелёк'}
+                    {walletScreen === 'success' ? 'Подключено!' : 'Подключить кошелёк'}
                   </h3>
                   <button onClick={handleCloseModal} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
                     <X size={20} className="text-[#8b949e]" />
@@ -558,7 +543,7 @@ export default function App() {
                       <MetaMaskIcon className="w-10 h-10" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">MetaMask</p>
-                        <p className="text-xs text-[#8b949e]">Расширение / Мобильный</p>
+                        <p className="text-xs text-[#8b949e]">Расширение браузера</p>
                       </div>
                       <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
@@ -571,22 +556,21 @@ export default function App() {
                       </div>
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">Trust Wallet</p>
-                        <p className="text-xs text-[#8b949e]">Мобильный кошелёк</p>
+                        <p className="text-xs text-[#8b949e]">Расширение браузера</p>
                       </div>
                       <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
 
-                    {/* WalletConnect */}
-                    <button onClick={() => handleConnectWallet('walletconnect')}
+                    {/* AliTerra */}
+                    <button onClick={() => window.open('https://wallet.aliterra.space', '_blank')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
-                      <div className="w-10 h-10 bg-[#3b99fc] rounded-xl flex items-center justify-center">
-                        <WalletConnectIcon className="w-6 h-6" />
+                      <div className="w-10 h-10 bg-gradient-to-br from-[#ff6b6b] to-[#feca57] rounded-xl flex items-center justify-center">
+                        <Globe size={24} className="text-white" />
                       </div>
                       <div className="text-left flex-1">
-                        <p className="font-medium text-[#f0f6fc] group-hover:text-white">WalletConnect</p>
-                        <p className="text-xs text-[#8b949e]">QR код для любого кошелька</p>
+                        <p className="font-medium text-[#f0f6fc] group-hover:text-white">AliTerra Wallet</p>
+                        <p className="text-xs text-[#8b949e]">Откроется в новой вкладке</p>
                       </div>
-                      <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
                   </div>
                 )}
@@ -600,42 +584,6 @@ export default function App() {
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
                     <button onClick={handleCloseModal} className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
-                  </div>
-                )}
-
-                {walletScreen === 'qr' && (
-                  <div className="py-4 text-center">
-                    <div className="bg-[#21262d] p-4 rounded-2xl mb-4">
-                      <p className="text-[#8b949e] text-xs mb-3">Скопируйте URI для подключения:</p>
-                      <div className="bg-[#0d1117] p-3 rounded-xl">
-                        <code className="text-[#f0f6fc] text-[10px] break-all block">
-                          {wcUri?.substring(0, 60)}...
-                        </code>
-                      </div>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(wcUri || '')}
-                        className="mt-3 px-4 py-2 bg-[#2f8af5] text-white rounded-lg text-sm hover:bg-[#1a73e8] transition-colors">
-                        Копировать URI
-                      </button>
-                    </div>
-                    <p className="text-[#8b949e] text-sm mb-4">Или откройте в приложении:</p>
-                    <div className="space-y-2">
-                      <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
-                        className="flex items-center justify-center gap-2 p-3 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors">
-                        <MetaMaskIcon className="w-6 h-6" />
-                        <span className="text-[#f0f6fc] text-sm">Открыть в MetaMask</span>
-                        <ExternalLink size={14} className="text-[#8b949e]" />
-                      </a>
-                      <a href={`trust://wc?uri=${encodeURIComponent(wcUri || '')}`}
-                        className="flex items-center justify-center gap-2 p-3 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors">
-                        <div className="w-6 h-6 bg-[#3375bb] rounded-md flex items-center justify-center">
-                          <Wallet size={14} className="text-white" />
-                        </div>
-                        <span className="text-[#f0f6fc] text-sm">Открыть в Trust Wallet</span>
-                        <ExternalLink size={14} className="text-[#8b949e]" />
-                      </a>
-                    </div>
-                    <button onClick={handleCloseModal} className="mt-4 text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
                   </div>
                 )}
 
