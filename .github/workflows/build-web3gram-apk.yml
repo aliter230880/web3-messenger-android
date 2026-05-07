@@ -1,60 +1,53 @@
-name: 🔨 Build Web3Gram APK
+name: Build Web3Gram APK
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'mimo2.pro/**'
   workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 📥 Checkout
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🟢 Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: ☕ Java
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
-      - name: 🤖 Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Install deps
+      - name: Install npm packages
         working-directory: mimo2.pro
-        run: npm install
+        run: npm install --legacy-peer-deps
 
-      - name: 🔨 Build web
+      - name: Build web app
         working-directory: mimo2.pro
         run: npm run build
 
-      - name: ⚡ Capacitor
+      - name: Install Capacitor
         working-directory: mimo2.pro
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
 
-      - name: 🚀 Init
+      - name: Initialize Capacitor
         working-directory: mimo2.pro
-        run: npx cap init Web3Gram andr.web3gram --web-dir dist
+        run: npx cap init "Web3Gram" "andr.web3gram" --web-dir=dist
 
-      - name: 🤖 Android
+      - name: Add Android platform
         working-directory: mimo2.pro
         run: |
           npx cap add android
           npx cap sync android
 
-      - name: 📁 Security config
+      - name: Create network security config
         working-directory: mimo2.pro
         run: |
           mkdir -p android/app/src/main/res/xml
@@ -68,13 +61,14 @@ jobs:
           </network-security-config>
           EOF
 
-      - name: 🏗️ Build APK
+      - name: Build APK
         working-directory: mimo2.pro
         run: |
-          chmod +x android/gradlew
-          cd android && ./gradlew assembleDebug
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-      - name: 📤 Upload
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Web3Gram-APK
