@@ -21,10 +21,10 @@ import {
   MessageCircle,
   Plus,
   X,
-  ChevronRight,
   Loader2,
   Copy,
-  CheckCircle
+  CheckCircle,
+  ExternalLink
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
@@ -103,7 +103,7 @@ const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
 
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, error: walletError } = useWallet();
+  const { connect, disconnect, wcUri, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
@@ -112,12 +112,13 @@ export default function App() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'success'>('picker');
+  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'deeplink' | 'success'>('picker');
   const [localChats, setLocalChats] = useState<Chat[]>(initialChats);
   const [localMessages, setLocalMessages] = useState<Record<string, Message[]>>(initialMessages);
   const [copied, setCopied] = useState(false);
   const [newChatAddress, setNewChatAddress] = useState('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [selectedWalletType, setSelectedWalletType] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentWalletAddress = store.wallet.address || '';
@@ -129,11 +130,11 @@ export default function App() {
   }, [currentMessages]);
 
   useEffect(() => {
-    if (walletError) {
+    if (walletError && walletScreen === 'connecting') {
       setConnectionError(walletError);
-      setWalletScreen('picker');
+      setWalletScreen('deeplink');
     }
-  }, [walletError]);
+  }, [walletError, walletScreen]);
 
   const handleSendMessage = () => {
     if (!messageInput.trim() || !selectedChatId) return;
@@ -186,6 +187,7 @@ export default function App() {
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'walletconnect') => {
     setWalletScreen('connecting');
     setConnectionError(null);
+    setSelectedWalletType(walletType);
     
     try {
       await connect(walletType);
@@ -196,7 +198,12 @@ export default function App() {
       }, 1500);
     } catch (err: any) {
       setConnectionError(err.message);
-      setWalletScreen('picker');
+      // Если это deep link ошибка, показываем экран с кнопками
+      if (err.message.includes('Подтвердите')) {
+        setWalletScreen('deeplink');
+      } else {
+        setWalletScreen('picker');
+      }
     }
   };
 
@@ -204,6 +211,7 @@ export default function App() {
     setShowWalletModal(false);
     setWalletScreen('picker');
     setConnectionError(null);
+    setSelectedWalletType(null);
   };
 
   const handleNewChat = () => {
@@ -524,16 +532,12 @@ export default function App() {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-semibold text-[#f0f6fc]">
-                    {walletScreen === 'success' ? 'Подключено!' : 'Подключить кошелёк'}
+                    {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'deeplink' ? 'Откройте кошелёк' : 'Подключить кошелёк'}
                   </h3>
                   <button onClick={handleCloseModal} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
                     <X size={20} className="text-[#8b949e]" />
                   </button>
                 </div>
-
-                {connectionError && walletScreen === 'picker' && (
-                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">{connectionError}</div>
-                )}
 
                 {walletScreen === 'picker' && (
                   <div className="space-y-3">
@@ -543,9 +547,8 @@ export default function App() {
                       <MetaMaskIcon className="w-10 h-10" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">MetaMask</p>
-                        <p className="text-xs text-[#8b949e]">Расширение браузера</p>
+                        <p className="text-xs text-[#8b949e]">Мобильный / Расширение</p>
                       </div>
-                      <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
 
                     {/* Trust Wallet */}
@@ -556,9 +559,8 @@ export default function App() {
                       </div>
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">Trust Wallet</p>
-                        <p className="text-xs text-[#8b949e]">Расширение браузера</p>
+                        <p className="text-xs text-[#8b949e]">Мобильный кошелёк</p>
                       </div>
-                      <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
 
                     {/* AliTerra */}
@@ -571,6 +573,7 @@ export default function App() {
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">AliTerra Wallet</p>
                         <p className="text-xs text-[#8b949e]">Откроется в новой вкладке</p>
                       </div>
+                      <ExternalLink size={16} className="text-[#484f58]" />
                     </button>
                   </div>
                 )}
@@ -582,8 +585,40 @@ export default function App() {
                       <Loader2 size={64} className="text-[#2f8af5]" />
                     </motion.div>
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
-                    <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
+                    <p className="text-sm text-[#8b949e] mb-4">Откройте кошелёк для подтверждения</p>
                     <button onClick={handleCloseModal} className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
+                  </div>
+                )}
+
+                {walletScreen === 'deeplink' && (
+                  <div className="py-4 text-center">
+                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся автоматически, нажмите кнопку ниже:</p>
+                    <div className="space-y-3">
+                      <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
+                        className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors w-full">
+                        <MetaMaskIcon className="w-8 h-8" />
+                        <span className="text-[#f0f6fc] font-medium">Открыть в MetaMask</span>
+                        <ExternalLink size={16} className="text-[#8b949e]" />
+                      </a>
+                      <a href={`trust://wc?uri=${encodeURIComponent(wcUri || '')}`}
+                        className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors w-full">
+                        <div className="w-8 h-8 bg-[#3375bb] rounded-lg flex items-center justify-center">
+                          <Wallet size={18} className="text-white" />
+                        </div>
+                        <span className="text-[#f0f6fc] font-medium">Открыть в Trust Wallet</span>
+                        <ExternalLink size={16} className="text-[#8b949e]" />
+                      </a>
+                    </div>
+                    <div className="mt-4 flex gap-3 justify-center">
+                      <button onClick={() => setWalletScreen('picker')}
+                        className="px-4 py-2 bg-[#2f8af5] text-white rounded-xl text-sm hover:bg-[#1a73e8] transition-colors">
+                        Назад
+                      </button>
+                      <button onClick={handleCloseModal}
+                        className="px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc] transition-colors">
+                        Закрыть
+                      </button>
+                    </div>
                   </div>
                 )}
 
