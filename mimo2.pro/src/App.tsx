@@ -16,8 +16,6 @@ import {
   LogOut,
   Wallet,
   Shield,
-  Users,
-  Globe,
   Lock,
   MessageCircle,
   Plus,
@@ -31,7 +29,7 @@ import {
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
 
-// Generate mock data
+// Mock data
 const generateMockData = () => {
   const chats: Chat[] = [
     {
@@ -108,7 +106,7 @@ const copyToClipboard = async (text: string) => {
   }
 };
 
-// MetaMask Icon Component
+// MetaMask SVG Icon
 const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
   <svg className={className} viewBox="0 0 318.6 318.6">
     <polygon fill="#E2761B" stroke="#E2761B" points="274.1,35.5 174.6,109.4 193,65.8"/>
@@ -137,16 +135,9 @@ const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
   </svg>
 );
 
-// WalletConnect Icon Component
-const WalletConnectIcon = ({ className = "w-6 h-6" }) => (
-  <svg className={className} viewBox="0 0 24 18" fill="none">
-    <path d="M4.915 5.673C7.55 3.077 11.826 3.077 14.462 5.673L14.818 6.024C14.982 6.185 15.064 6.413 15.064 6.638C15.064 6.863 14.982 7.091 14.818 7.252L13.747 8.308C13.583 8.469 13.351 8.549 13.119 8.549C12.887 8.549 12.655 8.469 12.491 8.308L11.989 7.813C10.533 6.379 8.175 6.379 6.719 7.813L6.185 8.339C6.021 8.5 5.789 8.58 5.557 8.58C5.325 8.58 5.093 8.5 4.929 8.339L3.858 7.283C3.694 7.122 3.612 6.894 3.612 6.669C3.612 6.444 3.694 6.216 3.858 6.055L4.915 5.673ZM16.953 5.673L18.01 6.055C18.174 6.216 18.256 6.444 18.256 6.669C18.256 6.894 18.174 7.122 18.01 7.283L16.939 8.339C16.775 8.5 16.543 8.58 16.311 8.58C16.079 8.58 15.847 8.5 15.683 8.339L15.149 7.813C13.693 6.379 11.335 6.379 9.879 7.813L9.377 8.308C9.213 8.469 8.981 8.549 8.749 8.549C8.517 8.549 8.285 8.469 8.121 8.308L7.05 7.252C6.886 7.091 6.804 6.863 6.804 6.638C6.804 6.413 6.886 6.185 7.05 6.024L7.406 5.673C10.041 3.077 14.317 3.077 16.953 5.673ZM22.734 3.453L17.943 0.202C17.348 -0.112 16.626 -0.069 16.071 0.304L14.675 1.249C14.387 1.438 14.043 1.534 13.692 1.521C13.341 1.534 12.998 1.438 12.71 1.249L11.406 0.372C10.846 0.003 10.126 -0.038 9.534 0.273L4.743 3.453C3.665 4.179 2.998 5.418 3.001 6.742V11.259C2.998 12.583 3.665 13.822 4.743 14.548L9.534 17.728C10.126 18.039 10.846 17.998 11.406 17.629L12.71 16.752C12.998 16.563 13.341 16.467 13.692 16.48C14.043 16.467 14.387 16.563 14.675 16.752L16.071 17.697C16.626 18.07 17.348 18.113 17.943 17.799L22.734 14.548C23.812 13.822 24.479 12.583 24.476 11.259V6.742C24.479 5.418 23.812 4.179 22.734 3.453Z" fill="#3B99FC"/>
-  </svg>
-);
-
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, wcUri, error: walletError } = useWallet();
+  const { connect, disconnect, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
@@ -155,14 +146,12 @@ export default function App() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'qr' | 'success'>('picker');
+  const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'success'>('picker');
   const [localChats, setLocalChats] = useState<Chat[]>(initialChats);
   const [localMessages, setLocalMessages] = useState<Record<string, Message[]>>(initialMessages);
   const [copied, setCopied] = useState(false);
   const [newChatAddress, setNewChatAddress] = useState('');
-  const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connectingWallet, setConnectingWallet] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -170,19 +159,10 @@ export default function App() {
   const selectedChat = localChats.find(c => c.id === selectedChatId);
   const currentMessages = selectedChatId ? (localMessages[selectedChatId] || []) : [];
 
-  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentMessages]);
 
-  // Show QR when WC URI is available
-  useEffect(() => {
-    if (wcUri && walletScreen === 'connecting') {
-      setWalletScreen('qr');
-    }
-  }, [wcUri, walletScreen]);
-
-  // Handle wallet errors
   useEffect(() => {
     if (walletError) {
       setConnectionError(walletError);
@@ -242,7 +222,6 @@ export default function App() {
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'walletconnect') => {
     setWalletScreen('connecting');
     setConnectionError(null);
-    setConnectingWallet(walletType);
     
     try {
       await connect(walletType);
@@ -250,21 +229,33 @@ export default function App() {
       setTimeout(() => {
         setShowWalletModal(false);
         setWalletScreen('picker');
-        setConnectingWallet(null);
       }, 1500);
     } catch (err: any) {
       console.error('Connection failed:', err);
-      setConnectionError(err.message || 'Connection failed');
+      setConnectionError(err.message);
       setWalletScreen('picker');
-      setConnectingWallet(null);
     }
+  };
+
+  // Social login handlers - open OAuth in new window
+  const handleSocialLogin = (provider: string) => {
+    const urls: Record<string, string> = {
+      google: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=' + encodeURIComponent(window.location.origin + '/auth/google') + '&response_type=code&scope=openid%20email%20profile',
+      twitter: 'https://twitter.com/i/oauth2/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=' + encodeURIComponent(window.location.origin + '/auth/twitter') + '&response_type=code&scope=tweet.read%20users.read',
+      discord: 'https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=' + encodeURIComponent(window.location.origin + '/auth/discord') + '&response_type=code&scope=identify%20email',
+    };
+    
+    // For demo: show alert. In production: open OAuth popup
+    alert(`${provider} авторизация: в продакшене здесь будет OAuth для создания кошелька через LoginFactory контракт (0xF3D8c9B1e209DD3b8f2F70a1A896f3F3f5cd77C8)`);
+    
+    // Uncomment for real OAuth:
+    // window.open(urls[provider], '_blank', 'width=500,height=600');
   };
 
   const handleCloseModal = () => {
     setShowWalletModal(false);
     setWalletScreen('picker');
     setConnectionError(null);
-    setConnectingWallet(null);
   };
 
   const handleNewChat = () => {
@@ -322,7 +313,6 @@ export default function App() {
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             className="w-full md:w-[380px] lg:w-[420px] bg-[#161b22] flex flex-col border-r border-[#30363d] absolute md:relative z-20 h-full"
           >
-            {/* Header */}
             <header className="flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#30363d] safe-top">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#2f8af5] to-[#6366f1] flex items-center justify-center shadow-lg shadow-blue-500/20">
@@ -369,7 +359,6 @@ export default function App() {
               </div>
             </header>
 
-            {/* Search */}
             <div className="px-3 py-2">
               <div className="flex items-center bg-[#21262d] rounded-xl px-3 py-2.5">
                 <Search size={18} className="text-[#8b949e] mr-2 flex-shrink-0" />
@@ -383,7 +372,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* E2E Status */}
             {store.wallet.isConnected && (
               <div className="px-4 py-2 flex items-center gap-2 text-xs">
                 <Shield size={14} className="text-[#3fb950]" />
@@ -392,7 +380,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Chat List */}
             <div className="flex-1 overflow-y-auto">
               {filteredChats.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full px-4 text-center">
@@ -455,7 +442,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Connection Status */}
             {!store.wallet.isConnected && (
               <div className="p-4 border-t border-[#30363d]">
                 <button
@@ -475,7 +461,6 @@ export default function App() {
       <main className="flex-1 flex flex-col bg-[#0d1117] relative">
         {selectedChatId && selectedChat ? (
           <>
-            {/* Chat Header */}
             <header className="flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#30363d] safe-top">
               <div className="flex items-center gap-3">
                 <motion.button 
@@ -499,49 +484,29 @@ export default function App() {
                 <div>
                   <h2 className="font-semibold text-[#f0f6fc]">{selectedChat.contactName}</h2>
                   <p className="text-xs text-[#8b949e]">
-                    {typingUsers[selectedChatId] ? (
-                      <span className="text-[#2f8af5]">печатает...</span>
-                    ) : selectedChat.isOnline ? (
-                      'в сети'
-                    ) : (
-                      `был(а) ${formatTime(selectedChat.lastMessageTime || Date.now())}`
-                    )}
+                    {selectedChat.isOnline ? 'в сети' : `был(а) ${formatTime(selectedChat.lastMessageTime || Date.now())}`}
                   </p>
                 </div>
               </div>
               
               <div className="flex items-center gap-1">
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors hidden sm:flex"
-                >
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors hidden sm:flex">
                   <Phone size={20} className="text-[#8b949e]" />
                 </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors hidden sm:flex"
-                >
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors hidden sm:flex">
                   <Video size={20} className="text-[#8b949e]" />
                 </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors"
-                >
+                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors">
                   <MoreVertical size={20} className="text-[#8b949e]" />
                 </motion.button>
               </div>
             </header>
 
-            {/* Encryption Notice */}
             <div className="flex items-center justify-center gap-2 py-2 px-4 text-xs text-[#8b949e] bg-[#0d1117]">
               <Lock size={12} className="text-[#3fb950]" />
               <span>Сообщения защищены сквозным шифрованием</span>
             </div>
 
-            {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1 bg-[#0d1117]">
               {currentMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -556,7 +521,6 @@ export default function App() {
                   {currentMessages.map((message, index) => {
                     const isMe = message.senderAddress === currentWalletAddress || message.senderAddress === '0xMyWallet';
                     const showAvatar = !isMe && (index === 0 || currentMessages[index - 1]?.senderAddress !== message.senderAddress);
-                    const showName = showAvatar;
                     
                     return (
                       <motion.div
@@ -577,7 +541,7 @@ export default function App() {
                           {!isMe && !showAvatar && <div className="w-8" />}
                           
                           <div className="flex flex-col">
-                            {showName && !isMe && (
+                            {showAvatar && !isMe && (
                               <span className="text-xs text-[#2f8af5] ml-3 mb-1">{selectedChat.contactName}</span>
                             )}
                             <div
@@ -590,7 +554,7 @@ export default function App() {
                               <p className="text-[#f0f6fc] text-[15px] whitespace-pre-wrap break-words leading-relaxed">
                                 {message.content}
                               </p>
-                              <div className={`flex items-center justify-end gap-1.5 mt-1.5`}>
+                              <div className="flex items-center justify-end gap-1.5 mt-1.5">
                                 <span className="text-[11px] text-[#8b949e]/70">
                                   {new Date(message.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
                                 </span>
@@ -615,7 +579,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Input Area */}
             <div className="px-4 py-3 bg-[#161b22] border-t border-[#30363d] safe-bottom">
               <div className="flex items-end gap-2">
                 <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors flex-shrink-0">
@@ -744,14 +707,13 @@ export default function App() {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-semibold text-[#f0f6fc]">
-                    {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'qr' ? 'Отсканируйте QR' : 'Подключить кошелёк'}
+                    {walletScreen === 'success' ? 'Подключено!' : 'Подключить кошелёк'}
                   </h3>
                   <button onClick={handleCloseModal} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
                     <X size={20} className="text-[#8b949e]" />
                   </button>
                 </div>
 
-                {/* Error display */}
                 {connectionError && walletScreen === 'picker' && (
                   <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
                     {connectionError}
@@ -783,22 +745,7 @@ export default function App() {
                       </div>
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">Trust Wallet</p>
-                        <p className="text-xs text-[#8b949e]">WalletConnect</p>
-                      </div>
-                      <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
-                    </button>
-
-                    {/* WalletConnect */}
-                    <button
-                      onClick={() => handleConnectWallet('walletconnect')}
-                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group"
-                    >
-                      <div className="w-10 h-10 bg-[#3b99fc] rounded-xl flex items-center justify-center">
-                        <WalletConnectIcon className="w-6 h-6" />
-                      </div>
-                      <div className="text-left flex-1">
-                        <p className="font-medium text-[#f0f6fc] group-hover:text-white">WalletConnect</p>
-                        <p className="text-xs text-[#8b949e]">Любой совместимый кошелёк</p>
+                        <p className="text-xs text-[#8b949e]">Через window.ethereum</p>
                       </div>
                       <ChevronRight size={20} className="text-[#484f58] group-hover:text-[#8b949e] transition-colors" />
                     </button>
@@ -815,21 +762,21 @@ export default function App() {
 
                     {/* Social Login Options */}
                     <div className="grid grid-cols-3 gap-3">
-                      <button className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
+                      <button onClick={() => handleSocialLogin('google')} className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                         <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center">
                           <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
                         </div>
                         <span className="text-xs text-[#8b949e] group-hover:text-white">Google</span>
                       </button>
 
-                      <button className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
+                      <button onClick={() => handleSocialLogin('twitter')} className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                         <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center">
                           <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                         </div>
                         <span className="text-xs text-[#8b949e] group-hover:text-white">X</span>
                       </button>
 
-                      <button className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
+                      <button onClick={() => handleSocialLogin('discord')} className="flex flex-col items-center gap-2 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                         <div className="w-10 h-10 bg-[#5865F2] rounded-full flex items-center justify-center">
                           <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
                         </div>
@@ -837,10 +784,9 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Info */}
                     <div className="flex items-start gap-3 text-xs text-[#8b949e] pt-4">
                       <Lock size={14} className="text-[#3fb950] flex-shrink-0 mt-0.5" />
-                      <p>Подключение через LoginFactory контракт на Polygon. Кошелёк создаётся автоматически.</p>
+                      <p>Подключение через LoginFactory контракт на Polygon (0xF3D8c9B1e209DD3b8f2F70a1A896f3F3f5cd77C8)</p>
                     </div>
                   </div>
                 )}
@@ -851,54 +797,8 @@ export default function App() {
                       <Loader2 size={64} className="text-[#2f8af5]" />
                     </motion.div>
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
-                    <p className="text-sm text-[#8b949e] mb-4">Откройте кошелёк для подтверждения</p>
+                    <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
                     <button onClick={handleCloseModal} className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">
-                      Отмена
-                    </button>
-                  </div>
-                )}
-
-                {walletScreen === 'qr' && wcUri && (
-                  <div className="py-4 text-center">
-                    <div className="bg-[#21262d] p-4 rounded-2xl mb-4">
-                      <p className="text-[#8b949e] text-xs mb-3">Скопируйте URI для подключения:</p>
-                      <div className="bg-[#0d1117] p-3 rounded-xl">
-                        <code className="text-[#f0f6fc] text-[10px] break-all block">
-                          {wcUri}
-                        </code>
-                      </div>
-                      <button
-                        onClick={() => copyToClipboard(wcUri)}
-                        className="mt-3 px-4 py-2 bg-[#2f8af5] text-white rounded-lg text-sm hover:bg-[#1a73e8] transition-colors"
-                      >
-                        Копировать URI
-                      </button>
-                    </div>
-                    
-                    <p className="text-[#8b949e] text-sm mb-4">Или откройте в приложении:</p>
-                    
-                    <div className="space-y-2">
-                      <a
-                        href={`metamask://wc?uri=${encodeURIComponent(wcUri)}`}
-                        className="flex items-center justify-center gap-2 p-3 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors"
-                      >
-                        <MetaMaskIcon className="w-6 h-6" />
-                        <span className="text-[#f0f6fc] text-sm">Открыть в MetaMask</span>
-                        <ExternalLink size={14} className="text-[#8b949e]" />
-                      </a>
-                      <a
-                        href={`trust://wc?uri=${encodeURIComponent(wcUri)}`}
-                        className="flex items-center justify-center gap-2 p-3 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors"
-                      >
-                        <div className="w-6 h-6 bg-[#3375bb] rounded-md flex items-center justify-center">
-                          <Wallet size={14} className="text-white" />
-                        </div>
-                        <span className="text-[#f0f6fc] text-sm">Открыть в Trust Wallet</span>
-                        <ExternalLink size={14} className="text-[#8b949e]" />
-                      </a>
-                    </div>
-                    
-                    <button onClick={handleCloseModal} className="mt-4 text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">
                       Отмена
                     </button>
                   </div>
