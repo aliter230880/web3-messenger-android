@@ -32,7 +32,8 @@ import {
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
-import { profileService } from './services/profileService';
+import { identityService } from './services/identityService';
+import { messengerService } from './services/messengerService';
 
 // Локальные аватарки
 const avatarOptions = [
@@ -168,9 +169,8 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, []);
 
-  // XMTP инициализация с жёстким timeout
+  // XMTP инициализация
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
     let isMounted = true;
 
     const initXmtp = async () => {
@@ -179,20 +179,11 @@ export default function App() {
       xmtpInitRef.current = true;
       setXmtpStatus('connecting');
 
-      // Жёсткий timeout 8 секунд
-      timeoutId = setTimeout(() => {
-        if (isMounted && xmtpStatus === 'connecting') {
-          console.log('XMTP: Timeout - отключаем');
-          setXmtpStatus('failed');
-          xmtpInitRef.current = false;
-        }
-      }, 8000);
-
       try {
         const { xmtpService } = await import('./services/xmtpService');
-        const success = await xmtpService.initialize(store.wallet.signer);
         
-        clearTimeout(timeoutId);
+        // Убираем timeout - даём XMTP столько времени сколько нужно
+        const success = await xmtpService.initialize(store.wallet.signer);
         
         if (success && isMounted) {
           setXmtpStatus('connected');
@@ -202,7 +193,6 @@ export default function App() {
           xmtpInitRef.current = false;
         }
       } catch (error) {
-        clearTimeout(timeoutId);
         console.error('XMTP init error:', error);
         if (isMounted) {
           setXmtpStatus('failed');
@@ -212,12 +202,16 @@ export default function App() {
     };
 
     if (store.wallet.isConnected && store.wallet.signer) {
-      initXmtp();
+      // Запускаем с задержкой чтобы не блокировать UI
+      const timeout = setTimeout(initXmtp, 1000);
+      return () => {
+        isMounted = false;
+        clearTimeout(timeout);
+      };
     }
 
     return () => {
       isMounted = false;
-      clearTimeout(timeoutId);
     };
   }, [store.wallet.isConnected, store.wallet.signer]);
 
@@ -233,24 +227,24 @@ export default function App() {
     const loadOnChainProfile = async () => {
       if (store.wallet.isConnected && store.wallet.address) {
         try {
-          console.log('Loading on-chain profile for:', store.wallet.address);
+          console.log('Loading on-chain identity for:', store.wallet.address);
           
-          // Проверяем есть ли профиль on-chain
-          const profile = await profileService.getProfile(store.wallet.address);
+          // Проверяем есть ли идентичность on-chain (IdentityV2 контракт)
+          const identity = await identityService.getIdentity(store.wallet.address);
           
-          if (profile && profile.exists && profile.username) {
-            console.log('Found on-chain profile:', profile.username);
+          if (identity && identity.exists && identity.nickname) {
+            console.log('Found on-chain identity:', identity.nickname);
             
             // Обновляем локальный профиль
             store.setCurrentUser({
               id: store.wallet.address,
-              name: profile.username,
+              name: identity.nickname,
               avatar: getAvatarUrl(store.wallet.address),
             });
             
-            setUserName(profile.username);
+            setUserName(identity.nickname);
           } else if (!store.currentUser) {
-            // Нет профиля - устанавливаем дефолтный
+            // Нет идентичности - устанавливаем дефолтный
             store.setCurrentUser({
               id: store.wallet.address,
               name: truncateAddress(store.wallet.address),
@@ -391,10 +385,7 @@ export default function App() {
 
   // Удаление чата
   const handleDeleteChat = (chatId: string) => {
-    store.updateChat(chatId, { messages: [] }); // Очищаем
-    // Фильтруем чаты
-    const filtered = store.chats.filter(c => c.id !== chatId);
-    store.chats.splice(0, store.chats.length, ...filtered);
+    store.deleteChat(chatId);
     
     if (selectedChatId === chatId) {
       setSelectedChatId(null);
@@ -413,22 +404,21 @@ export default function App() {
       avatar,
     });
 
-    // Сохраняем on-chain если есть signer
+    // Сохраняем on-chain если есть signer (IdentityV2 контракт)
     if (store.wallet.signer && userName) {
       setIsSavingProfile(true);
       try {
-        profileService.initWithSigner(store.wallet.signer);
-        const hasProfile = await profileService.hasProfile(currentWalletAddress);
+        const hasIdentity = await identityService.hasIdentity(currentWalletAddress);
         
-        if (!hasProfile) {
-          console.log('Creating on-chain profile...');
-          await profileService.createProfile(userName, 'wallet');
+        if (!hasIdentity) {
+          console.log('Creating on-chain identity...');
+          await identityService.createIdentity(store.wallet.signer, userName);
         } else {
-          console.log('Updating on-chain username...');
-          await profileService.updateUsername(userName);
+          console.log('Updating on-chain nickname...');
+          await identityService.updateNickname(store.wallet.signer, userName);
         }
       } catch (error) {
-        console.error('Error saving profile on-chain:', error);
+        console.error('Error saving identity on-chain:', error);
       } finally {
         setIsSavingProfile(false);
       }
