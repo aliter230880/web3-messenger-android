@@ -41,13 +41,12 @@ export function useWallet(): UseWalletReturn {
 
     try {
       const ethereum = (window as any).ethereum;
-      const mobile = isMobile();
       
-      console.log('Wallet connect:', walletType, 'isMobile:', mobile, 'hasEthereum:', !!ethereum);
+      console.log('Wallet connect:', walletType, 'hasEthereum:', !!ethereum);
 
-      // ========== DESKTOP или MOBILE с window.ethereum ==========
-      if (ethereum && !mobile) {
-        console.log('Using window.ethereum (desktop extension)');
+      // ========== Есть window.ethereum (desktop ИЛИ mobile browser) ==========
+      if (ethereum) {
+        console.log('Using window.ethereum directly');
         
         // Запрашиваем аккаунты - это вызовет popup MetaMask
         const accounts = await ethereum.request({ 
@@ -104,8 +103,8 @@ export function useWallet(): UseWalletReturn {
         return;
       }
 
-      // ========== MOBILE без window.ethereum ==========
-      console.log('Mobile mode - using WalletConnect');
+      // ========== НЕТ window.ethereum - используем WalletConnect ==========
+      console.log('No window.ethereum - using WalletConnect');
       
       // Инициализируем WalletConnect
       const { SignClient } = await import('@walletconnect/sign-client');
