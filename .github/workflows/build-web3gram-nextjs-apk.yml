@@ -54,13 +54,34 @@ jobs:
             @capacitor/android \
             @capacitor/splash-screen
 
-      - name: Build Next.js application
+      - name: Build Next.js (static export)
         working-directory: ${{ env.WORKING_DIR }}
         run: npm run build
 
+      - name: Verify index.html exists
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "=== Checking .next directory ==="
+          ls -la .next/ | head -20
+          echo ""
+          echo "=== Looking for index.html ==="
+          find .next -name "index.html" | head -5
+          echo ""
+          if [ -f ".next/index.html" ]; then
+            echo "✅ .next/index.html found!"
+          else
+            echo "❌ .next/index.html NOT found!"
+            echo "Creating fallback..."
+            cp -r .next/server/app/* .next/ 2>/dev/null || true
+            find .next -name "index.html" -exec cp {} .next/ \; 2>/dev/null || true
+          fi
+
       - name: Initialize Capacitor
         working-directory: ${{ env.WORKING_DIR }}
-        run: npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=.next
+        run: |
+          # Remove old config if exists
+          rm -rf capacitor.config.json android
+          npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=.next
 
       - name: Add Android platform
         working-directory: ${{ env.WORKING_DIR }}
@@ -83,4 +104,58 @@ jobs:
               <domain-config cleartextTrafficPermitted="true">
                   <domain includeSubdomains="true">relay.walletconnect.com</domain>
                   <domain includeSubdomains="true">relay.walletconnect.org</domain>
-                  <domain includeSub
+                  <domain includeSubdomains="true">api.walletconnect.com</domain>
+                  <domain includeSubdomains="true">rpc.walletconnect.com</domain>
+                  <domain includeSubdomains="true">polygon-rpc.com</domain>
+                  <domain includeSubdomains="true">chat.aliterra.space</domain>
+                  <domain includeSubdomains="true">wallet.aliterra.space</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+
+      - name: Patch AndroidManifest for deep links
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
+            sed -i 's|<application|<application\n        android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
+          fi
+          if ! grep -q "metamask" "$MANIFEST"; then
+            sed -i 's|</application>|        <queries>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="metamask" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="trust" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="wc" />\n            </intent>\n        </queries>\n    </application>|' "$MANIFEST"
+          fi
+
+      - name: Fix Kotlin/Gradle compatibility
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cat >> android/app/build.gradle << 'EOF'
+
+          configurations.all {
+              resolutionStrategy {
+                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22'
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3gram-nextjs-build-log
+          path: /tmp/gradle-build.log
+          retention-days: 3
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Web3Gram-NextJS-debug
+          path: ${{ env.WORKING_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 90
