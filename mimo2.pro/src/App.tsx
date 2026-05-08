@@ -33,6 +33,16 @@ import {
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
 
+// Lazy load XMTP service
+let xmtpService: any = null;
+const getXmtpService = async () => {
+  if (!xmtpService) {
+    const module = await import('./services/xmtpService');
+    xmtpService = module.xmtpService;
+  }
+  return xmtpService;
+};
+
 // Mock data
 const initialChats: Chat[] = [
   {
@@ -135,6 +145,9 @@ export default function App() {
   const [userName, setUserName] = useState('');
   const [userAvatar, setUserAvatar] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('Ava');
+  const [xmtpReady, setXmtpReady] = useState(false);
+  const [xmtpStatus, setXmtpStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const unsubscribersRef = useRef<(() => void)[]>([]);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentWalletAddress = store.wallet.address || '';
@@ -159,54 +172,169 @@ export default function App() {
     }
   }, [store.currentUser]);
 
-  const handleSendMessage = () => {
+  // Инициализация XMTP при подключении кошелька
+  useEffect(() => {
+    let isMounted = true;
+    
+    const initXmtp = async () => {
+      if (store.wallet.isConnected && store.wallet.signer && !xmtpReady && isMounted) {
+        setXmtpStatus('connecting');
+        try {
+          const service = await getXmtpService();
+          const success = await service.initialize(store.wallet.signer);
+          if (success && isMounted) {
+            setXmtpReady(true);
+            setXmtpStatus('connected');
+            
+            // Подписываемся на все входящие сообщения
+            try {
+              const unsub = await service.subscribeToAllMessages((msg: any) => {
+                if (!isMounted) return;
+                
+                // Находим чат по адресу отправителя
+                setLocalChats(prev => {
+                  const existingChat = prev.find(c => c.contactAddress === msg.senderAddress);
+                  if (existingChat) {
+                    return prev.map(c => 
+                      c.id === existingChat.id 
+                        ? { ...c, lastMessage: msg.content, lastMessageTime: msg.timestamp, unreadCount: c.unreadCount + 1 }
+                        : c
+                    );
+                  }
+                  // Создаём новый чат если его нет
+                  const newChat: Chat = {
+                    id: `chat_${Date.now()}`,
+                    contactAddress: msg.senderAddress,
+                    contactName: msg.senderAddress.slice(0, 8) + '...',
+                    contactAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.senderAddress}`,
+                    messages: [],
+                    unreadCount: 1,
+                    lastMessage: msg.content,
+                    lastMessageTime: msg.timestamp,
+                    isOnline: true,
+                  };
+                  return [newChat, ...prev];
+                });
+              });
+              
+              unsubscribersRef.current.push(unsub);
+            } catch (streamError) {
+              console.error('XMTP stream error:', streamError);
+            }
+          }
+        } catch (error) {
+          console.error('XMTP init error:', error);
+          if (isMounted) {
+            setXmtpStatus('disconnected');
+          }
+        }
+      }
+    };
+    
+    initXmtp();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [store.wallet.isConnected, store.wallet.signer]);
+
+  // Cleanup XMTP при отключении кошелька
+  useEffect(() => {
+    const cleanupXmtp = async () => {
+      if (!store.wallet.isConnected && xmtpReady) {
+        unsubscribersRef.current.forEach(unsub => {
+          try { unsub(); } catch {}
+        });
+        unsubscribersRef.current = [];
+        const service = await getXmtpService();
+        service.disconnect();
+        setXmtpReady(false);
+        setXmtpStatus('disconnected');
+      }
+    };
+    cleanupXmtp();
+  }, [store.wallet.isConnected]);
+
+  const handleSendMessage = async () => {
     if (!messageInput.trim() || !selectedChatId) return;
     const targetChat = localChats.find(c => c.id === selectedChatId);
     if (!targetChat) return;
 
-    const newMessage: Message = {
-      id: `msg_${Date.now()}`,
+    const content = messageInput.trim();
+    
+    // Локальное сообщение для мгновенного отображения
+    const localMessage: Message = {
+      id: `local_${Date.now()}`,
       chatId: selectedChatId,
       senderAddress: currentWalletAddress,
       receiverAddress: targetChat.contactAddress,
-      content: messageInput.trim(),
+      content: content,
       timestamp: Date.now(),
       isSent: true,
       isDelivered: false,
     };
 
+    // Сразу показываем сообщение локально
     setLocalMessages(prev => ({
       ...prev,
-      [selectedChatId]: [...(prev[selectedChatId] || []), newMessage]
+      [selectedChatId]: [...(prev[selectedChatId] || []), localMessage]
     }));
 
     setLocalChats(prev => prev.map(chat => 
       chat.id === selectedChatId 
-        ? { ...chat, lastMessage: messageInput.trim(), lastMessageTime: Date.now() }
+        ? { ...chat, lastMessage: content, lastMessageTime: Date.now() }
         : chat
     ));
 
     setMessageInput('');
 
-    // Simulate delivery
-    setTimeout(() => {
-      setLocalMessages(prev => ({
-        ...prev,
-        [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-          m.id === newMessage.id ? { ...m, isDelivered: true } : m
-        )
-      }));
-    }, 500);
+    // Отправляем через XMTP если доступен
+    if (xmtpReady) {
+      try {
+        const service = await getXmtpService();
+        if (service.isReady()) {
+          const sent = await service.sendMessage(targetChat.contactAddress, content);
+          
+          // Обновляем локальное сообщение с реальным ID
+          setLocalMessages(prev => ({
+            ...prev,
+            [selectedChatId]: (prev[selectedChatId] || []).map(m => 
+              m.id === localMessage.id 
+                ? { ...m, id: sent.id, isDelivered: true } 
+                : m
+            )
+          }));
+        }
+      } catch (error) {
+        console.error('XMTP send error:', error);
+        // Помечаем сообщение как не доставленное
+        setLocalMessages(prev => ({
+          ...prev,
+          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
+            m.id === localMessage.id ? { ...m, isDelivered: false } : m
+          )
+        }));
+      }
+    } else {
+      // Если XMTP не доступен - симулируем доставку
+      setTimeout(() => {
+        setLocalMessages(prev => ({
+          ...prev,
+          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
+            m.id === localMessage.id ? { ...m, isDelivered: true } : m
+          )
+        }));
+      }, 500);
 
-    // Simulate read
-    setTimeout(() => {
-      setLocalMessages(prev => ({
-        ...prev,
-        [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-          m.id === newMessage.id ? { ...m, isRead: true } : m
-        )
-      }));
-    }, 2000);
+      setTimeout(() => {
+        setLocalMessages(prev => ({
+          ...prev,
+          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
+            m.id === localMessage.id ? { ...m, isRead: true } : m
+          )
+        }));
+      }, 2000);
+    }
   };
 
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
@@ -385,9 +513,11 @@ export default function App() {
 
             {store.wallet.isConnected && (
               <div className="px-4 py-2 flex items-center gap-2 text-xs">
-                <Shield size={14} className="text-[#3fb950]" />
-                <span className="text-[#3fb950]">E2E шифрование</span>
-                <span className="text-[#8b949e]">• Polygon • XMTP</span>
+                <Shield size={14} className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 'text-[#8b949e]'} />
+                <span className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 'text-[#8b949e]'}>
+                  {xmtpStatus === 'connected' ? 'E2E активно' : xmtpStatus === 'connecting' ? 'XMTP подключается...' : 'E2E отключено'}
+                </span>
+                <span className="text-[#8b949e]">• Polygon</span>
               </div>
             )}
 
