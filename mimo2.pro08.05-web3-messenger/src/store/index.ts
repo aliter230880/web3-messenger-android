@@ -1,17 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export interface Contact {
-  address: string;
-  name: string;
-  avatar?: string;
-  lastMessage?: string;
-  lastMessageTime?: number;
-  unreadCount?: number;
-  isOnline?: boolean;
-  isTyping?: boolean;
-}
-
 export interface Message {
   id: string;
   chatId: string;
@@ -22,7 +11,6 @@ export interface Message {
   isSent: boolean;
   isDelivered?: boolean;
   isRead?: boolean;
-  isEncrypted?: boolean;
 }
 
 export interface Chat {
@@ -47,50 +35,32 @@ export interface WalletState {
   isReadOnly: boolean;
 }
 
+export interface UserProfile {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
 export interface AppState {
-  // Wallet
+  // Wallet (не сохраняется полностью - только адрес)
   wallet: WalletState;
   setWallet: (wallet: Partial<WalletState>) => void;
   disconnectWallet: () => void;
   
-  // Current User
-  currentUser: { id: string; name: string; avatar?: string } | null;
-  setCurrentUser: (user: { id: string; name: string; avatar?: string } | null) => void;
+  // Current User (сохраняется)
+  currentUser: UserProfile | null;
+  setCurrentUser: (user: UserProfile | null) => void;
   
-  // Chats
+  // Chats (сохраняется)
   chats: Chat[];
   activeChat: string | null;
   setActiveChat: (chatId: string | null) => void;
   addChat: (chat: Chat) => void;
-  updateChat: (chatId: string, updates: Partial<Chat>) => void;
   addMessage: (chatId: string, message: Message) => void;
   markAsRead: (chatId: string) => void;
+  deleteChat: (chatId: string) => void;
   
-  // UI State
-  isSidebarOpen: boolean;
-  setSidebarOpen: (open: boolean) => void;
-  isWalletModalOpen: boolean;
-  setWalletModalOpen: (open: boolean) => void;
-  isNewChatModalOpen: boolean;
-  setNewChatModalOpen: (open: boolean) => void;
-  isProfileModalOpen: boolean;
-  setProfileModalOpen: (open: boolean) => void;
-  
-  // XMTP Status
-  xmtpReady: boolean;
-  xmtpAvailable: boolean;
-  setXmtpReady: (ready: boolean) => void;
-  setXmtpAvailable: (available: boolean) => void;
-  
-  // E2E
-  e2eInitialized: boolean;
-  setE2EInitialized: (initialized: boolean) => void;
-  
-  // Error handling
-  error: string | null;
-  setError: (error: string | null) => void;
-  
-  // Theme
+  // Theme (сохраняется)
   theme: 'dark' | 'light';
   setTheme: (theme: 'dark' | 'light') => void;
 }
@@ -107,11 +77,14 @@ const initialWalletState: WalletState = {
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Wallet
       wallet: initialWalletState,
       setWallet: (wallet) => set((state) => ({ wallet: { ...state.wallet, ...wallet } })),
-      disconnectWallet: () => set({ wallet: initialWalletState, currentUser: null, e2eInitialized: false, xmtpReady: false, xmtpAvailable: false }),
+      disconnectWallet: () => set({ 
+        wallet: initialWalletState, 
+        currentUser: null,
+      }),
       
       // Current User
       currentUser: null,
@@ -124,37 +97,18 @@ export const useStore = create<AppState>()(
       addChat: (chat) => set((state) => ({
         chats: [chat, ...state.chats.filter(c => c.id !== chat.id)]
       })),
-      updateChat: (chatId, updates) => set((state) => ({
-        chats: state.chats.map(c => c.id === chatId ? { ...c, ...updates } : c)
-      })),
       addMessage: (chatId, message) => set((state) => {
         const chatIndex = state.chats.findIndex(c => c.id === chatId);
-        if (chatIndex === -1) {
-          // Create new chat
-          const newChat: Chat = {
-            id: chatId,
-            contactAddress: message.receiverAddress === state.wallet.address ? message.senderAddress : message.receiverAddress,
-            contactName: message.receiverAddress === state.wallet.address ? message.senderAddress.slice(0, 8) + '...' : message.receiverAddress.slice(0, 8) + '...',
-            messages: [message],
-            unreadCount: message.senderAddress !== state.wallet.address ? 1 : 0,
-            lastMessage: message.content,
-            lastMessageTime: message.timestamp,
-          };
-          return { chats: [newChat, ...state.chats] };
-        }
+        if (chatIndex === -1) return state;
         
-        const existingChat = state.chats[chatIndex];
-        const messageExists = existingChat.messages.some(m => m.id === message.id);
-        if (messageExists) return state;
+        const chat = state.chats[chatIndex];
+        if (chat.messages.some(m => m.id === message.id)) return state;
         
         const updatedChat = {
-          ...existingChat,
-          messages: [...existingChat.messages, message].sort((a, b) => a.timestamp - b.timestamp),
+          ...chat,
+          messages: [...chat.messages, message],
           lastMessage: message.content,
           lastMessageTime: message.timestamp,
-          unreadCount: message.senderAddress !== state.wallet.address 
-            ? (existingChat.unreadCount || 0) + 1 
-            : existingChat.unreadCount,
         };
         
         return {
@@ -164,42 +118,43 @@ export const useStore = create<AppState>()(
       markAsRead: (chatId) => set((state) => ({
         chats: state.chats.map(c => c.id === chatId ? { ...c, unreadCount: 0 } : c)
       })),
-      
-      // UI State
-      isSidebarOpen: true,
-      setSidebarOpen: (open) => set({ isSidebarOpen: open }),
-      isWalletModalOpen: false,
-      setWalletModalOpen: (open) => set({ isWalletModalOpen: open }),
-      isNewChatModalOpen: false,
-      setNewChatModalOpen: (open) => set({ isNewChatModalOpen: open }),
-      isProfileModalOpen: false,
-      setProfileModalOpen: (open) => set({ isProfileModalOpen: open }),
-      
-      // XMTP Status
-      xmtpReady: false,
-      xmtpAvailable: false,
-      setXmtpReady: (ready) => set({ xmtpReady: ready }),
-      setXmtpAvailable: (available) => set({ xmtpAvailable: available }),
-      
-      // E2E
-      e2eInitialized: false,
-      setE2EInitialized: (initialized) => set({ e2eInitialized: initialized }),
-      
-      // Error handling
-      error: null,
-      setError: (error) => set({ error }),
+      deleteChat: (chatId) => set((state) => ({
+        chats: state.chats.filter(c => c.id !== chatId),
+        activeChat: state.activeChat === chatId ? null : state.activeChat,
+      })),
       
       // Theme
       theme: 'dark',
       setTheme: (theme) => set({ theme }),
     }),
     {
-      name: 'web3gram-storage',
+      name: 'web3gram-v2',
       partialize: (state) => ({
         chats: state.chats,
         theme: state.theme,
         currentUser: state.currentUser,
+        activeChat: state.activeChat,
+        // Сохраняем isConnected и address для авто-подключения
+        _savedWallet: {
+          address: state.wallet.address,
+          type: state.wallet.walletType,
+          isConnected: state.wallet.isConnected,
+        },
       }),
+      // Восстановление
+      merge: (persistedState: any, currentState) => {
+        const saved = persistedState?._savedWallet;
+        return {
+          ...currentState,
+          ...persistedState,
+          wallet: {
+            ...currentState.wallet,
+            address: saved?.address || null,
+            walletType: saved?.type || null,
+            // isConnected будет false пока не reconnect
+          },
+        };
+      },
     }
   )
 );

@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ethers } from 'ethers';
 import { 
   Search, 
   Edit, 
@@ -27,66 +28,26 @@ import {
   ExternalLink,
   Trash2,
   Settings,
-  User,
-  Camera
+  User
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
+import { identityService } from './services/identityService';
+import { messengerService } from './services/messengerService';
 
-// Lazy load XMTP service
-let xmtpService: any = null;
-const getXmtpService = async () => {
-  if (!xmtpService) {
-    const module = await import('./services/xmtpService');
-    xmtpService = module.xmtpService;
-  }
-  return xmtpService;
-};
-
-// Mock data
-const initialChats: Chat[] = [
-  {
-    id: 'chat_1',
-    contactAddress: '0x1234567890abcdef1234567890abcdef12345678',
-    contactName: 'Alice Web3',
-    contactAvatar: '/ava/ava (1).png',
-    messages: [],
-    unreadCount: 3,
-    lastMessage: 'Привет! Как дела с проектом? 🚀',
-    lastMessageTime: Date.now() - 120000,
-    isOnline: true,
-  },
-  {
-    id: 'chat_2',
-    contactAddress: '0xabcdef1234567890abcdef1234567890abcdef12',
-    contactName: 'Bob DeFi',
-    contactAvatar: '/ava/ava (2).png',
-    messages: [],
-    unreadCount: 0,
-    lastMessage: 'Готово, проверь кошелёк',
-    lastMessageTime: Date.now() - 3600000,
-    isOnline: false,
-  },
+// Локальные аватарки
+const avatarOptions = [
+  'ava (1)', 'ava (2)', 'ava (3)', 'ava (4)', 'ava (5)', 'ava (6)', 'ava (7)', 'ava (8)',
+  'ava (9)', 'ava (10)', 'ava (11)', 'ava (12)', 'ava (13)', 'ava (14)', 'ava (15)', 'ava (16)',
+  'ava (17)', 'ava (18)', 'ava (19)', 'ava (20)', 'ava (21)', 'ava (22)'
 ];
 
-const initialMessages: Record<string, Message[]> = {
-  'chat_1': [
-    { id: 'm1', chatId: 'chat_1', senderAddress: '0x1234567890abcdef1234567890abcdef12345678', receiverAddress: '0xMyWallet', content: 'Привет! 👋', timestamp: Date.now() - 600000, isSent: true, isRead: true },
-    { id: 'm2', chatId: 'chat_1', senderAddress: '0xMyWallet', receiverAddress: '0x1234567890abcdef1234567890abcdef12345678', content: 'Привет! Как проекты?', timestamp: Date.now() - 580000, isSent: true, isRead: true, isDelivered: true },
-  ],
+const getAvatarUrl = (seed: string) => {
+  const index = Math.abs(seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % avatarOptions.length;
+  return `/ava/${avatarOptions[index]}.png`;
 };
 
-const formatTime = (timestamp: number) => {
-  const diff = Date.now() - timestamp;
-  if (diff < 60000) return 'сейчас';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} мин`;
-  if (diff < 86400000) return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  return new Date(timestamp).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-};
-
-const truncateAddress = (addr: string) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
-
-// Иконки кошельков - локальные PNG
+// Иконки кошельков
 const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
   <img src="/ava/metamask.png" alt="MetaMask" className={className} />
 );
@@ -99,31 +60,22 @@ const AliTerraIcon = ({ className = "w-10 h-10" }) => (
   <img src="/ava/aliterra.png" alt="AliTerra" className={className} />
 );
 
-// Локальные аватарки из папки ava
-const avatarOptions = [
-  'ava (1)', 'ava (2)', 'ava (3)', 'ava (4)', 'ava (5)', 'ava (6)', 'ava (7)', 'ava (8)',
-  'ava (9)', 'ava (10)', 'ava (11)', 'ava (12)', 'ava (13)', 'ava (14)', 'ava (15)', 'ava (16)',
-  'ava (17)', 'ava (18)', 'ava (19)', 'ava (20)', 'ava (21)', 'ava (22)'
-];
-
-// Функция получения URL аватарки
-const getAvatarUrl = (seed: string) => {
-  // Используем локальные аватарки на основе seed
-  const index = Math.abs(seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % avatarOptions.length;
-  return `/ava/${avatarOptions[index]}.png`;
+// Утилиты
+const formatTime = (timestamp: number) => {
+  const diff = Date.now() - timestamp;
+  if (diff < 60000) return 'сейчас';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} мин`;
+  if (diff < 86400000) return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return new Date(timestamp).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 };
 
-// Случайная аватарка по умолчанию
-const getDefaultAvatar = () => {
-  const index = Math.floor(Math.random() * avatarOptions.length);
-  return `/ava/${avatarOptions[index]}.png`;
-};
+const truncateAddress = (addr: string) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
 
 export default function App() {
   const store = useStore();
   const { connect, disconnect, wcUri, error: walletError } = useWallet();
   
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(store.activeChat);
   const [messageInput, setMessageInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showWalletModal, setShowWalletModal] = useState(false);
@@ -133,214 +85,234 @@ export default function App() {
   const [showAliTerraModal, setShowAliTerraModal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'deeplink' | 'success'>('picker');
-  const [localChats, setLocalChats] = useState<Chat[]>(initialChats);
-  const [localMessages, setLocalMessages] = useState<Record<string, Message[]>>(initialMessages);
   const [copied, setCopied] = useState(false);
   const [newChatAddress, setNewChatAddress] = useState('');
   const [aliterraAddress, setAliterraAddress] = useState('');
   const [showChatMenu, setShowChatMenu] = useState<string | null>(null);
-  const [userName, setUserName] = useState('');
-  const [userAvatar, setUserAvatar] = useState('');
-  const [selectedAvatar, setSelectedAvatar] = useState('Ava');
-  const [xmtpReady, setXmtpReady] = useState(false);
-  const [xmtpStatus, setXmtpStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const unsubscribersRef = useRef<(() => void)[]>([]);
+  const [userName, setUserName] = useState(store.currentUser?.name || '');
+  const [selectedAvatar, setSelectedAvatar] = useState('ava (1)');
+  const [xmtpStatus, setXmtpStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
+  const [isConnectingWallet, setIsConnectingWallet] = useState(false);
+  const [gasEstimate, setGasEstimate] = useState<string | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const xmtpInitRef = useRef(false);
+  
   const currentWalletAddress = store.wallet.address || '';
-  const selectedChat = localChats.find(c => c.id === selectedChatId);
-  const currentMessages = selectedChatId ? (localMessages[selectedChatId] || []) : [];
+  const selectedChat = store.chats.find(c => c.id === selectedChatId);
+  const currentMessages = selectedChatId ? (store.chats.find(c => c.id === selectedChatId)?.messages || []) : [];
 
+  // Автоскролл
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentMessages]);
+  }, [currentMessages.length]);
 
+  // Инициализация профиля
+  useEffect(() => {
+    if (store.currentUser) {
+      setUserName(store.currentUser.name || '');
+    }
+  }, [store.currentUser?.name]);
+
+  // Авто-подключение при запуске если был подключён ранее
+  useEffect(() => {
+    const autoConnect = async () => {
+      // Проверяем localStorage напрямую
+      try {
+        const saved = localStorage.getItem('web3gram-storage');
+        if (saved) {
+          const data = JSON.parse(saved);
+          const savedAddress = data?.state?.savedWalletAddress;
+          const savedType = data?.state?.savedWalletType;
+          
+          if (savedAddress && !store.wallet.isConnected) {
+            console.log('Auto-connect: found saved wallet', savedAddress);
+            
+            // Проверяем есть ли window.ethereum
+            const ethereum = (window as any).ethereum;
+            if (ethereum && savedType !== 'aliterra') {
+              try {
+                // Пытаемся получить аккаунты без запроса
+                const accounts = await ethereum.request({ method: 'eth_accounts' });
+                
+                if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
+                  // Кошелёк всё ещё подключён
+                  console.log('Auto-connect: wallet still connected');
+                  
+                  const provider = new ethers.providers.Web3Provider(ethereum, 'any');
+                  const signer = provider.getSigner();
+                  
+                  store.setWallet({
+                    isConnected: true,
+                    address: accounts[0],
+                    chainId: 137,
+                    signer: signer,
+                    provider: provider,
+                    walletType: savedType || 'metamask',
+                    isReadOnly: false,
+                  });
+                }
+              } catch (error) {
+                console.log('Auto-connect: wallet not available');
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Auto-connect error:', error);
+      }
+    };
+
+    // Запускаем авто-подключение с небольшой задержкой
+    const timeout = setTimeout(autoConnect, 500);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  // XMTP инициализация
+  useEffect(() => {
+    let isMounted = true;
+
+    const initXmtp = async () => {
+      if (!store.wallet.isConnected || !store.wallet.signer || xmtpInitRef.current) return;
+      
+      xmtpInitRef.current = true;
+      setXmtpStatus('connecting');
+
+      try {
+        const { xmtpService } = await import('./services/xmtpService');
+        
+        // Убираем timeout - даём XMTP столько времени сколько нужно
+        const success = await xmtpService.initialize(store.wallet.signer);
+        
+        if (success && isMounted) {
+          setXmtpStatus('connected');
+          console.log('XMTP: Connected');
+        } else if (isMounted) {
+          setXmtpStatus('failed');
+          xmtpInitRef.current = false;
+        }
+      } catch (error) {
+        console.error('XMTP init error:', error);
+        if (isMounted) {
+          setXmtpStatus('failed');
+          xmtpInitRef.current = false;
+        }
+      }
+    };
+
+    if (store.wallet.isConnected && store.wallet.signer) {
+      // Запускаем с задержкой чтобы не блокировать UI
+      const timeout = setTimeout(initXmtp, 1000);
+      return () => {
+        isMounted = false;
+        clearTimeout(timeout);
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [store.wallet.isConnected, store.wallet.signer]);
+
+  // Обработка ошибок кошелька
   useEffect(() => {
     if (walletError && walletScreen === 'connecting') {
       setWalletScreen('deeplink');
     }
   }, [walletError, walletScreen]);
 
-  // Initialize profile from store
+  // Загрузка профиля on-chain при подключении кошелька
   useEffect(() => {
-    if (store.currentUser) {
-      setUserName(store.currentUser.name || '');
-      setUserAvatar(store.currentUser.avatar || '');
-    }
-  }, [store.currentUser]);
-
-  // Инициализация XMTP при подключении кошелька
-  useEffect(() => {
-    let isMounted = true;
-    
-    const initXmtp = async () => {
-      if (store.wallet.isConnected && store.wallet.signer && !xmtpReady && isMounted) {
-        setXmtpStatus('connecting');
+    const loadOnChainProfile = async () => {
+      if (store.wallet.isConnected && store.wallet.address) {
         try {
-          const service = await getXmtpService();
-          const success = await service.initialize(store.wallet.signer);
-          if (success && isMounted) {
-            setXmtpReady(true);
-            setXmtpStatus('connected');
+          console.log('Loading on-chain identity for:', store.wallet.address);
+          
+          // Проверяем есть ли идентичность on-chain (IdentityV2 контракт)
+          const identity = await identityService.getIdentity(store.wallet.address);
+          
+          if (identity && identity.exists && identity.nickname) {
+            console.log('Found on-chain identity:', identity.nickname);
             
-            // Подписываемся на все входящие сообщения
-            try {
-              const unsub = await service.subscribeToAllMessages((msg: any) => {
-                if (!isMounted) return;
-                
-                // Находим чат по адресу отправителя
-                setLocalChats(prev => {
-                  const existingChat = prev.find(c => c.contactAddress === msg.senderAddress);
-                  if (existingChat) {
-                    return prev.map(c => 
-                      c.id === existingChat.id 
-                        ? { ...c, lastMessage: msg.content, lastMessageTime: msg.timestamp, unreadCount: c.unreadCount + 1 }
-                        : c
-                    );
-                  }
-                  // Создаём новый чат если его нет
-                  const newChat: Chat = {
-                    id: `chat_${Date.now()}`,
-                    contactAddress: msg.senderAddress,
-                    contactName: msg.senderAddress.slice(0, 8) + '...',
-                    contactAvatar: getAvatarUrl(msg.senderAddress),
-                    messages: [],
-                    unreadCount: 1,
-                    lastMessage: msg.content,
-                    lastMessageTime: msg.timestamp,
-                    isOnline: true,
-                  };
-                  return [newChat, ...prev];
-                });
-              });
-              
-              unsubscribersRef.current.push(unsub);
-            } catch (streamError) {
-              console.error('XMTP stream error:', streamError);
-            }
+            // Обновляем локальный профиль
+            store.setCurrentUser({
+              id: store.wallet.address,
+              name: identity.nickname,
+              avatar: getAvatarUrl(store.wallet.address),
+            });
+            
+            setUserName(identity.nickname);
+          } else if (!store.currentUser) {
+            // Нет идентичности - устанавливаем дефолтный
+            store.setCurrentUser({
+              id: store.wallet.address,
+              name: truncateAddress(store.wallet.address),
+              avatar: getAvatarUrl(store.wallet.address),
+            });
           }
         } catch (error) {
-          console.error('XMTP init error:', error);
-          if (isMounted) {
-            setXmtpStatus('disconnected');
-          }
+          console.error('Error loading profile:', error);
         }
       }
     };
-    
-    initXmtp();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [store.wallet.isConnected, store.wallet.signer]);
 
-  // Cleanup XMTP при отключении кошелька
+    loadOnChainProfile();
+  }, [store.wallet.isConnected, store.wallet.address]);
+
+  // Сохранение выбранного чата
   useEffect(() => {
-    const cleanupXmtp = async () => {
-      if (!store.wallet.isConnected && xmtpReady) {
-        unsubscribersRef.current.forEach(unsub => {
-          try { unsub(); } catch {}
-        });
-        unsubscribersRef.current = [];
-        const service = await getXmtpService();
-        service.disconnect();
-        setXmtpReady(false);
-        setXmtpStatus('disconnected');
-      }
-    };
-    cleanupXmtp();
-  }, [store.wallet.isConnected]);
+    if (selectedChatId) {
+      store.setActiveChat(selectedChatId);
+    }
+  }, [selectedChatId]);
 
-  const handleSendMessage = async () => {
+  // Обработчик отправки сообщения
+  const handleSendMessage = useCallback(async () => {
     if (!messageInput.trim() || !selectedChatId) return;
-    const targetChat = localChats.find(c => c.id === selectedChatId);
+    const targetChat = store.chats.find(c => c.id === selectedChatId);
     if (!targetChat) return;
 
     const content = messageInput.trim();
-    
-    // Локальное сообщение для мгновенного отображения
-    const localMessage: Message = {
-      id: `local_${Date.now()}`,
+    const newMessage: Message = {
+      id: `msg_${Date.now()}`,
       chatId: selectedChatId,
       senderAddress: currentWalletAddress,
       receiverAddress: targetChat.contactAddress,
-      content: content,
+      content,
       timestamp: Date.now(),
       isSent: true,
-      isDelivered: false,
+      isDelivered: xmtpStatus === 'connected',
+      isRead: false,
     };
 
-    // Сразу показываем сообщение локально
-    setLocalMessages(prev => ({
-      ...prev,
-      [selectedChatId]: [...(prev[selectedChatId] || []), localMessage]
-    }));
-
-    setLocalChats(prev => prev.map(chat => 
-      chat.id === selectedChatId 
-        ? { ...chat, lastMessage: content, lastMessageTime: Date.now() }
-        : chat
-    ));
-
+    // Добавляем через store (сохраняется в localStorage)
+    store.addMessage(selectedChatId, newMessage);
     setMessageInput('');
 
-    // Отправляем через XMTP если доступен
-    if (xmtpReady) {
+    // Попытка отправки через XMTP
+    if (xmtpStatus === 'connected') {
       try {
-        const service = await getXmtpService();
-        if (service.isReady()) {
-          const sent = await service.sendMessage(targetChat.contactAddress, content);
-          
-          // Обновляем локальное сообщение с реальным ID
-          setLocalMessages(prev => ({
-            ...prev,
-            [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-              m.id === localMessage.id 
-                ? { ...m, id: sent.id, isDelivered: true } 
-                : m
-            )
-          }));
-        }
+        const { xmtpService } = await import('./services/xmtpService');
+        await xmtpService.sendMessage(targetChat.contactAddress, content);
       } catch (error) {
         console.error('XMTP send error:', error);
-        // Помечаем сообщение как не доставленное
-        setLocalMessages(prev => ({
-          ...prev,
-          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-            m.id === localMessage.id ? { ...m, isDelivered: false } : m
-          )
-        }));
       }
-    } else {
-      // Если XMTP не доступен - симулируем доставку
-      setTimeout(() => {
-        setLocalMessages(prev => ({
-          ...prev,
-          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-            m.id === localMessage.id ? { ...m, isDelivered: true } : m
-          )
-        }));
-      }, 500);
-
-      setTimeout(() => {
-        setLocalMessages(prev => ({
-          ...prev,
-          [selectedChatId]: (prev[selectedChatId] || []).map(m => 
-            m.id === localMessage.id ? { ...m, isRead: true } : m
-          )
-        }));
-      }, 2000);
     }
-  };
+  }, [messageInput, selectedChatId, currentWalletAddress, xmtpStatus, store]);
 
+  // Подключение кошелька
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
+    if (isConnectingWallet) return;
+    
     setWalletScreen('connecting');
+    setIsConnectingWallet(true);
     
     if (walletType === 'aliterra') {
       setShowWalletModal(false);
       setShowAliTerraModal(true);
       setWalletScreen('picker');
+      setIsConnectingWallet(false);
       return;
     }
     
@@ -357,12 +329,15 @@ export default function App() {
       } else {
         setWalletScreen('picker');
       }
+    } finally {
+      setIsConnectingWallet(false);
     }
   };
 
+  // Подключение AliTerra
   const handleAliTerraConnect = () => {
     if (!aliterraAddress.trim() || !aliterraAddress.startsWith('0x')) {
-      alert('Введите корректный Ethereum адрес (начинается с 0x)');
+      alert('Введите корректный Ethereum адрес (0x...)');
       return;
     }
 
@@ -378,7 +353,7 @@ export default function App() {
 
     store.setCurrentUser({
       id: aliterraAddress,
-      name: `AliTerra ${aliterraAddress.slice(0, 6)}...`,
+      name: `AliTerra ${aliterraAddress.slice(0, 6)}`,
       avatar: getAvatarUrl(aliterraAddress),
     });
 
@@ -386,13 +361,10 @@ export default function App() {
     setAliterraAddress('');
   };
 
-  const handleCloseModal = () => {
-    setShowWalletModal(false);
-    setWalletScreen('picker');
-  };
-
+  // Создание нового чата
   const handleNewChat = () => {
     if (!newChatAddress.trim()) return;
+    
     const newChat: Chat = {
       id: `chat_${Date.now()}`,
       contactAddress: newChatAddress,
@@ -402,57 +374,84 @@ export default function App() {
       unreadCount: 0,
       lastMessage: 'Новый чат',
       lastMessageTime: Date.now(),
-      isOnline: Math.random() > 0.5,
+      isOnline: false,
     };
-    setLocalChats(prev => [newChat, ...prev]);
+    
+    store.addChat(newChat);
     setNewChatAddress('');
     setShowNewChatModal(false);
     setSelectedChatId(newChat.id);
   };
 
+  // Удаление чата
   const handleDeleteChat = (chatId: string) => {
-    setLocalChats(prev => prev.filter(c => c.id !== chatId));
-    setLocalMessages(prev => {
-      const newMessages = { ...prev };
-      delete newMessages[chatId];
-      return newMessages;
-    });
+    store.deleteChat(chatId);
+    
     if (selectedChatId === chatId) {
       setSelectedChatId(null);
     }
     setShowChatMenu(null);
   };
 
-  const handleSaveProfile = () => {
+  // Сохранение профиля (локально + on-chain)
+  const handleSaveProfile = async () => {
     const avatar = `/ava/${selectedAvatar}.png`;
+    
+    // Сохраняем локально
     store.setCurrentUser({
       id: store.currentUser?.id || currentWalletAddress,
       name: userName || 'Web3 User',
-      avatar: avatar,
+      avatar,
     });
-    setUserAvatar(avatar);
+
+    // Сохраняем on-chain если есть signer (IdentityV2 контракт)
+    if (store.wallet.signer && userName) {
+      setIsSavingProfile(true);
+      try {
+        const hasIdentity = await identityService.hasIdentity(currentWalletAddress);
+        
+        if (!hasIdentity) {
+          console.log('Creating on-chain identity...');
+          await identityService.createIdentity(store.wallet.signer, userName);
+        } else {
+          console.log('Updating on-chain nickname...');
+          await identityService.updateNickname(store.wallet.signer, userName);
+        }
+      } catch (error) {
+        console.error('Error saving identity on-chain:', error);
+      } finally {
+        setIsSavingProfile(false);
+      }
+    }
+
     setShowEditProfileModal(false);
   };
 
+  // Копирование адреса
   const handleCopyAddress = async () => {
     await navigator.clipboard.writeText(currentWalletAddress);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Отключение
   const handleDisconnect = () => {
     disconnect();
     setShowProfileModal(false);
+    xmtpInitRef.current = false;
+    setXmtpStatus('disconnected');
   };
 
+  // Фильтрация чатов
   const filteredChats = useMemo(() => 
-    localChats.filter(chat => 
+    store.chats.filter(chat => 
       chat.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       chat.contactAddress.toLowerCase().includes(searchQuery.toLowerCase())
-    ), [localChats, searchQuery]);
+    ), [store.chats, searchQuery]);
 
+  // Счётчик непрочитанных
   const totalUnread = useMemo(() => 
-    localChats.reduce((sum, chat) => sum + (chat.unreadCount || 0), 0), [localChats]);
+    store.chats.reduce((sum, chat) => sum + (chat.unreadCount || 0), 0), [store.chats]);
 
   return (
     <div className="h-screen w-screen flex bg-[#0d1117] overflow-hidden">
@@ -468,8 +467,8 @@ export default function App() {
           >
             <header className="flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#30363d] safe-top">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#2f8af5] to-[#6366f1] flex items-center justify-center shadow-lg shadow-blue-500/20">
-                  <MessageCircle size={20} className="text-white" />
+                <div className="w-10 h-10 rounded-full overflow-hidden">
+                  <img src="/ava/aliterra.png" alt="Web3Gram" className="w-full h-full object-cover" />
                 </div>
                 <div>
                   <h1 className="text-lg font-bold text-[#f0f6fc]">Web3Gram</h1>
@@ -510,9 +509,9 @@ export default function App() {
 
             {store.wallet.isConnected && (
               <div className="px-4 py-2 flex items-center gap-2 text-xs">
-                <Shield size={14} className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 'text-[#8b949e]'} />
-                <span className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 'text-[#8b949e]'}>
-                  {xmtpStatus === 'connected' ? 'E2E активно' : xmtpStatus === 'connecting' ? 'XMTP подключается...' : 'E2E отключено'}
+                <Shield size={14} className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : xmtpStatus === 'failed' ? 'text-[#ef4444]' : 'text-[#8b949e]'} />
+                <span className={xmtpStatus === 'connected' ? 'text-[#3fb950]' : xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : xmtpStatus === 'failed' ? 'text-[#ef4444]' : 'text-[#8b949e]'}>
+                  {xmtpStatus === 'connected' ? 'E2E активно' : xmtpStatus === 'connecting' ? 'Подключение...' : xmtpStatus === 'failed' ? 'E2E недоступно' : 'E2E отключено'}
                 </span>
                 <span className="text-[#8b949e]">• Polygon</span>
               </div>
@@ -531,7 +530,7 @@ export default function App() {
                   <motion.button
                     onClick={() => {
                       setSelectedChatId(chat.id);
-                      setLocalChats(prev => prev.map(c => c.id === chat.id ? { ...c, unreadCount: 0 } : c));
+                      store.markAsRead(chat.id);
                       if (window.innerWidth < 768) setShowSidebar(false);
                     }}
                     onContextMenu={(e) => {
@@ -562,7 +561,6 @@ export default function App() {
                     </div>
                   </motion.button>
                   
-                  {/* Chat context menu */}
                   <AnimatePresence>
                     {showChatMenu === chat.id && (
                       <motion.div
@@ -570,19 +568,11 @@ export default function App() {
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
                         className="absolute right-4 top-1/2 -translate-y-1/2 z-10 flex gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteChat(chat.id);
-                          }}
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteChat(chat.id); }}
                           className="p-2 bg-red-500 hover:bg-red-600 rounded-lg transition-colors">
                           <Trash2 size={16} className="text-white" />
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowChatMenu(null);
-                          }}
+                        <button onClick={(e) => { e.stopPropagation(); setShowChatMenu(null); }}
                           className="p-2 bg-[#30363d] hover:bg-[#484f58] rounded-lg transition-colors">
                           <X size={16} className="text-[#8b949e]" />
                         </button>
@@ -642,7 +632,7 @@ export default function App() {
 
             <div className="flex items-center justify-center gap-2 py-2 px-4 text-xs text-[#8b949e] bg-[#0d1117]">
               <Lock size={12} className="text-[#3fb950]" />
-              <span>Сообщения защищены сквозным шифрованием (XMTP)</span>
+              <span>Сообщения защищены (XMTP)</span>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1 bg-[#0d1117]">
@@ -652,10 +642,9 @@ export default function App() {
                     <Lock size={28} className="text-[#484f58]" />
                   </div>
                   <p className="text-[#8b949e]">Нет сообщений</p>
-                  <p className="text-[#484f58] text-sm mt-1">Начните диалог</p>
                 </div>
               ) : currentMessages.map((message, index) => {
-                const isMe = message.senderAddress === currentWalletAddress || message.senderAddress === '0xMyWallet';
+                const isMe = message.senderAddress === currentWalletAddress;
                 const showAvatar = !isMe && (index === 0 || currentMessages[index - 1]?.senderAddress !== message.senderAddress);
                 
                 return (
@@ -722,8 +711,8 @@ export default function App() {
               transition={{ type: 'spring', stiffness: 200 }} className="text-center max-w-md">
               <motion.div animate={{ boxShadow: ['0 0 20px rgba(47,138,245,0.3)', '0 0 40px rgba(47,138,245,0.5)', '0 0 20px rgba(47,138,245,0.3)'] }}
                 transition={{ repeat: Infinity, duration: 2 }}
-                className="w-28 h-28 mx-auto mb-8 rounded-full bg-gradient-to-br from-[#2f8af5] to-[#6366f1] flex items-center justify-center">
-                <MessageCircle size={56} className="text-white" />
+                className="w-28 h-28 mx-auto mb-8 rounded-full overflow-hidden">
+                <img src="/ava/aliterra.png" alt="Web3Gram" className="w-full h-full object-cover" />
               </motion.div>
               <h2 className="text-3xl font-bold text-[#f0f6fc] mb-3">Web3Gram</h2>
               <p className="text-[#8b949e] mb-8 text-lg">Безопасный мессенджер на базе Polygon</p>
@@ -763,7 +752,7 @@ export default function App() {
         {showWalletModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={handleCloseModal}>
+            onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}>
             <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
               onClick={(e) => e.stopPropagation()}
               className="bg-[#161b22] rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-[#30363d]">
@@ -772,7 +761,7 @@ export default function App() {
                   <h3 className="text-xl font-semibold text-[#f0f6fc]">
                     {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'deeplink' ? 'Откройте кошелёк' : 'Подключить кошелёк'}
                   </h3>
-                  <button onClick={handleCloseModal} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
+                  <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
                     <X size={20} className="text-[#8b949e]" />
                   </button>
                 </div>
@@ -781,7 +770,7 @@ export default function App() {
                   <div className="space-y-3">
                     <button onClick={() => handleConnectWallet('metamask')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
-                      <MetaMaskIcon className="w-10 h-10" />
+                      <MetaMaskIcon className="w-10 h-10 rounded-xl" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">MetaMask</p>
                         <p className="text-xs text-[#8b949e]">Мобильный / Расширение</p>
@@ -815,34 +804,30 @@ export default function App() {
                       <Loader2 size={64} className="text-[#2f8af5]" />
                     </motion.div>
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
-                    <p className="text-sm text-[#8b949e] mb-4">Откройте кошелёк для подтверждения</p>
-                    <button onClick={handleCloseModal} className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
+                    <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
+                    <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }} className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
                   </div>
                 )}
 
                 {walletScreen === 'deeplink' && (
                   <div className="py-4 text-center">
-                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся автоматически:</p>
+                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся:</p>
                     <div className="space-y-3">
                       <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
                         className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors w-full">
-                        <MetaMaskIcon className="w-8 h-8" />
+                        <MetaMaskIcon className="w-8 h-8 rounded-lg" />
                         <span className="text-[#f0f6fc] font-medium">Открыть в MetaMask</span>
                         <ExternalLink size={16} className="text-[#8b949e]" />
                       </a>
                       <a href={`trust://wc?uri=${encodeURIComponent(wcUri || '')}`}
                         className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors w-full">
-                        <div className="w-8 h-8 bg-[#3375bb] rounded-lg flex items-center justify-center">
-                          <Wallet size={18} className="text-white" />
-                        </div>
+                        <TrustWalletIcon className="w-8 h-8 rounded-lg" />
                         <span className="text-[#f0f6fc] font-medium">Открыть в Trust Wallet</span>
                         <ExternalLink size={16} className="text-[#8b949e]" />
                       </a>
                     </div>
-                    <button onClick={handleCloseModal}
-                      className="mt-4 px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc] transition-colors">
-                      Закрыть
-                    </button>
+                    <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
+                      className="mt-4 px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc] transition-colors">Закрыть</button>
                   </div>
                 )}
 
@@ -864,7 +849,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* AliTerra Modal - Manual Address Input */}
+      {/* AliTerra Modal */}
       <AnimatePresence>
         {showAliTerraModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -886,26 +871,18 @@ export default function App() {
                     <p className="text-sm text-[#8b949e] mb-3">1. Откройте AliTerra Wallet:</p>
                     <a href="https://wallet.aliterra.space" target="_blank" rel="noopener noreferrer"
                       className="flex items-center justify-center gap-2 p-3 bg-gradient-to-r from-[#ff6b6b] to-[#feca57] text-white rounded-lg font-medium hover:opacity-90 transition-opacity">
-                      <Globe size={18} />
-                      Открыть wallet.aliterra.space
-                      <ExternalLink size={14} />
+                      <Globe size={18} />Открыть wallet.aliterra.space<ExternalLink size={14} />
                     </a>
                   </div>
                   
                   <div className="p-4 bg-[#21262d] rounded-xl">
-                    <p className="text-sm text-[#8b949e] mb-2">2. Скопируйте адрес кошелька и вставьте:</p>
-                    <input
-                      type="text"
-                      placeholder="0x..."
-                      value={aliterraAddress}
+                    <p className="text-sm text-[#8b949e] mb-2">2. Скопируйте адрес и вставьте:</p>
+                    <input type="text" placeholder="0x..." value={aliterraAddress}
                       onChange={(e) => setAliterraAddress(e.target.value)}
-                      className="w-full bg-[#0d1117] text-[#f0f6fc] placeholder-[#484f58] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]"
-                    />
+                      className="w-full bg-[#0d1117] text-[#f0f6fc] placeholder-[#484f58] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]" />
                   </div>
                   
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                     onClick={handleAliTerraConnect}
                     className="w-full py-3.5 bg-gradient-to-r from-[#ff6b6b] to-[#feca57] text-white rounded-xl font-medium hover:opacity-90 transition-opacity">
                     Подключить
@@ -969,10 +946,8 @@ export default function App() {
                   </button>
                 </div>
                 <div className="text-center mb-6">
-                  <div className="relative inline-block">
-                    <img src={store.currentUser?.avatar || getAvatarUrl(currentWalletAddress)}
-                      alt="Avatar" className="w-24 h-24 rounded-full mx-auto mb-2 border-4 border-[#2f8af5]" />
-                  </div>
+                  <img src={store.currentUser?.avatar || getAvatarUrl(currentWalletAddress)}
+                    alt="Avatar" className="w-24 h-24 rounded-full mx-auto mb-2 border-4 border-[#2f8af5]" />
                   <h4 className="text-lg font-semibold text-[#f0f6fc]">{store.currentUser?.name || 'Web3 User'}</h4>
                   <div className="flex items-center justify-center gap-2 mt-2">
                     <code className="bg-[#21262d] px-3 py-1.5 rounded-lg text-sm text-[#8b949e]">{truncateAddress(currentWalletAddress)}</code>
@@ -1027,49 +1002,32 @@ export default function App() {
                 </div>
                 
                 <div className="space-y-4">
-                  {/* Avatar Selection */}
                   <div>
                     <label className="block text-sm text-[#8b949e] mb-3">Выберите аватар</label>
                     <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-1">
                       {avatarOptions.map((avatar) => (
-                        <button
-                          key={avatar}
-                          onClick={() => setSelectedAvatar(avatar)}
+                        <button key={avatar} onClick={() => setSelectedAvatar(avatar)}
                           className={`p-1 rounded-lg transition-all ${selectedAvatar === avatar ? 'ring-2 ring-[#2f8af5] bg-[#21262d]' : 'hover:bg-[#21262d]'}`}>
-                          <img
-                            src={`/ava/${avatar}.png`}
-                            alt={avatar}
-                            className="w-10 h-10 rounded-full"
-                          />
+                          <img src={`/ava/${avatar}.png`} alt={avatar} className="w-10 h-10 rounded-full" />
                         </button>
                       ))}
                     </div>
                   </div>
                   
-                  {/* Name Input */}
                   <div>
                     <label className="block text-sm text-[#8b949e] mb-2">Имя пользователя</label>
                     <div className="relative">
                       <User size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8b949e]" />
-                      <input
-                        type="text"
-                        placeholder="Введите имя"
-                        value={userName}
+                      <input type="text" placeholder="Введите имя" value={userName}
                         onChange={(e) => setUserName(e.target.value)}
-                        className="w-full bg-[#21262d] text-[#f0f6fc] placeholder-[#484f58] rounded-xl pl-12 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]"
-                      />
+                        className="w-full bg-[#21262d] text-[#f0f6fc] placeholder-[#484f58] rounded-xl pl-12 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]" />
                     </div>
                   </div>
                   
-                  {/* Preview */}
                   <div className="p-4 bg-[#21262d] rounded-xl">
                     <p className="text-xs text-[#8b949e] mb-2">Предпросмотр:</p>
                     <div className="flex items-center gap-3">
-                      <img
-                        src={`/ava/${selectedAvatar}.png`}
-                        alt="Preview"
-                        className="w-12 h-12 rounded-full"
-                      />
+                      <img src={`/ava/${selectedAvatar}.png`} alt="Preview" className="w-12 h-12 rounded-full" />
                       <div>
                         <p className="font-medium text-[#f0f6fc]">{userName || 'Web3 User'}</p>
                         <p className="text-xs text-[#8b949e]">{truncateAddress(currentWalletAddress)}</p>
@@ -1077,12 +1035,18 @@ export default function App() {
                     </div>
                   </div>
                   
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                     onClick={handleSaveProfile}
-                    className="w-full py-3.5 bg-gradient-to-r from-[#2f8af5] to-[#6366f1] text-white rounded-xl font-medium hover:opacity-90 transition-opacity">
-                    Сохранить
+                    disabled={isSavingProfile}
+                    className="w-full py-3.5 bg-gradient-to-r from-[#2f8af5] to-[#6366f1] text-white rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2">
+                    {isSavingProfile ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Сохранение...
+                      </>
+                    ) : (
+                      'Сохранить'
+                    )}
                   </motion.button>
                 </div>
               </div>
