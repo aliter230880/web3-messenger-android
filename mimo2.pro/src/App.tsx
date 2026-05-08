@@ -730,8 +730,16 @@ export default function App() {
                       <p><b>Trust Wallet:</b> Работает сразу</p>
                     </div>
                     
-                    <button onClick={() => handleConnectWallet('metamask')}
-                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors">
+                    <button 
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('MetaMask button clicked!');
+                        handleConnectWallet('metamask');
+                      }}
+                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors cursor-pointer"
+                    >
                       <MetaMaskIcon className="w-10 h-10 rounded-xl" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc]">MetaMask</p>
@@ -739,8 +747,16 @@ export default function App() {
                       </div>
                     </button>
 
-                    <button onClick={() => handleConnectWallet('trustwallet')}
-                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors">
+                    <button 
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('Trust Wallet button clicked!');
+                        handleConnectWallet('trustwallet');
+                      }}
+                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors cursor-pointer"
+                    >
                       <TrustWalletIcon className="w-10 h-10 rounded-xl" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc]">Trust Wallet</p>
