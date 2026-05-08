@@ -1,237 +1,212 @@
-import { useState, useCallback, useRef } from 'react';
+// useWallet.ts — исправленная версия
+// ИСПРАВЛЕНИЯ:
+//   1. Использует walletService вместо дублирующей реализации SignClient
+//   2. _finishConnect: мгновенный store update + фоновый XMTP
+//   3. xmtpStatus: 'idle'|'connecting'|'connected'|'error' с авто-retry
+//   4. checkAndFinishSession — для кнопки "Я подтвердил"
+//   5. wcUri — отдаётся наружу через onDisplayUri callback
+
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useStore } from '../store';
-import { ethers } from 'ethers';
+import { walletService, WalletConnection } from '../services/walletService';
+import { xmtpService } from '../services/xmtpService';
+
+export type XmtpStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
 export interface UseWalletReturn {
   connect: (walletType: 'metamask' | 'trustwallet' | 'aliterra') => Promise<void>;
+  connectAliTerra: (address: string) => Promise<void>;
+  openAliTerraWallet: (onAddress: (a: string) => void) => () => void;
+  checkAndFinishSession: (walletType: 'metamask' | 'trust' | 'walletconnect') => Promise<boolean>;
   disconnect: () => void;
+  cancelConnect: () => Promise<void>;
   isConnecting: boolean;
   error: string | null;
   wcUri: string | null;
+  xmtpStatus: XmtpStatus;
+  retryXmtp: () => Promise<void>;
+  isMobile: boolean;
+  isCapacitor: boolean;
+  hasMetaMask: boolean;
 }
-
-const WC_PROJECT_ID = '2de1d724533083c2ed68197548dead4e';
 
 export function useWallet(): UseWalletReturn {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wcUri, setWcUri] = useState<string | null>(null);
-  const signClientRef = useRef<any>(null);
-  
+  const [xmtpStatus, setXmtpStatus] = useState<XmtpStatus>('idle');
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const { setWallet, setCurrentUser, disconnectWallet } = useStore();
+  const store = useStore();
 
-  // Определяем платформу
-  const isMobile = () => {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  };
+  // ── _finishConnect: мгновенно обновляет store, XMTP в фоне ────────────────
+  const _finishConnect = useCallback(async (connection: WalletConnection) => {
+    const { provider, signer, address, walletType, readOnly } = connection;
 
-  // Открыть URL (нативно в Capacitor)
-  const openUrl = (url: string) => {
-    if (typeof (window as any).Capacitor !== 'undefined') {
-      window.open(url, '_system');
-    } else {
-      window.open(url, '_blank');
-    }
-  };
+    // ШАГ 1: Мгновенно обновляем store → UI разблокируется немедленно
+    setWallet({
+      isConnected: true,
+      address,
+      chainId: 137,
+      signer: signer as any,
+      provider: provider as any,
+      walletType,
+      isReadOnly: !!readOnly,
+    });
+    setCurrentUser({
+      id: address,
+      name: `${address.slice(0, 6)}…${address.slice(-4)}`,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
+    });
 
+    console.log(`✅ [${walletType}] подключён:`, address);
+
+    if (!signer || readOnly) return;
+
+    // ШАГ 2: XMTP в фоне — не блокирует UI
+    // Fast path: skipContactPublishing → 1-2с для вернувшихся пользователей
+    // Full path: с публикацией → ~5-8с при первом входе
+    setXmtpStatus('connecting');
+
+    const tryXmtp = async (attempt = 1): Promise<void> => {
+      const ok = await xmtpService.initialize(signer);
+      if (ok) {
+        setXmtpStatus('connected');
+      } else {
+        setXmtpStatus('error');
+        // Авто-retry: через 5с, потом каждые 30с
+        const delay = attempt === 1 ? 5000 : 30000;
+        retryTimerRef.current = setTimeout(() => tryXmtp(attempt + 1), delay);
+      }
+    };
+
+    tryXmtp();
+  }, [setWallet, setCurrentUser]);
+
+  // ── Основное подключение ───────────────────────────────────────────────────
   const connect = useCallback(async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
     setIsConnecting(true);
     setError(null);
     setWcUri(null);
 
+    // Колбек для получения WC URI → QR код
+    walletService.onDisplayUri = (uri: string) => setWcUri(uri);
+
     try {
-      const ethereum = (window as any).ethereum;
-      
-      console.log('Wallet connect:', walletType, 'hasEthereum:', !!ethereum);
-
-      // ========== Есть window.ethereum (desktop ИЛИ mobile browser) ==========
-      if (ethereum) {
-        console.log('Using window.ethereum directly');
-        
-        // Запрашиваем аккаунты - это вызовет popup MetaMask
-        const accounts = await ethereum.request({ 
-          method: 'eth_requestAccounts' 
-        });
-        
-        if (!accounts || accounts.length === 0) {
-          throw new Error('Нет аккаунтов');
-        }
-
-        const address = accounts[0];
-        console.log('Got address:', address);
-        
-        // Переключаемся на Polygon
-        try {
-          await ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x89' }],
-          });
-        } catch (switchError: any) {
-          if (switchError.code === 4902) {
-            await ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: '0x89',
-                chainName: 'Polygon Mainnet',
-                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-                rpcUrls: ['https://polygon-rpc.com'],
-                blockExplorerUrls: ['https://polygonscan.com'],
-              }],
-            });
-          }
-        }
-
-        const provider = new ethers.providers.Web3Provider(ethereum, 'any');
-        const signer = provider.getSigner();
-
-        setWallet({
-          isConnected: true,
-          address: address,
-          chainId: 137,
-          signer: signer,
-          provider: provider,
-          walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet',
-          isReadOnly: false,
-        });
-
-        setCurrentUser({
-          id: address,
-          name: `${address.slice(0, 6)}...${address.slice(-4)}`,
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
-        });
-
+      let connection: WalletConnection;
+      if (walletType === 'trustwallet') {
+        connection = await walletService.connectTrust();
+      } else if (walletType === 'aliterra') {
+        // AliTerra: отдельный flow через connectAliTerra()
         return;
+      } else {
+        connection = await walletService.connectMetaMask();
       }
-
-      // ========== НЕТ window.ethereum - используем WalletConnect ==========
-      console.log('No window.ethereum - using WalletConnect');
-      
-      // Инициализируем WalletConnect
-      const { SignClient } = await import('@walletconnect/sign-client');
-      
-      signClientRef.current = await SignClient.init({
-        projectId: WC_PROJECT_ID,
-        metadata: {
-          name: 'Web3Gram',
-          description: 'Secure Web3 Messenger',
-          url: window.location.origin,
-          icons: ['https://chat.aliterra.space/icon.png'],
-        },
-      });
-
-      // Создаём сессию
-      const { uri, approval } = await signClientRef.current.connect({
-        requiredNamespaces: {
-          eip155: {
-            methods: [
-              'eth_sendTransaction',
-              'eth_signTransaction', 
-              'eth_sign',
-              'personal_sign',
-              'eth_signTypedData',
-            ],
-            chains: ['eip155:137'],
-            events: ['chainChanged', 'accountsChanged'],
-          },
-        },
-      });
-
-      if (!uri) {
-        throw new Error('Не удалось создать WalletConnect URI');
-      }
-
-      console.log('WC URI created');
-      setWcUri(uri);
-
-      // Открываем deep link в зависимости от кошелька
-      if (walletType === 'metamask') {
-        console.log('Opening MetaMask deep link');
-        openUrl(`metamask://wc?uri=${encodeURIComponent(uri)}`);
-      } else if (walletType === 'trustwallet') {
-        console.log('Opening Trust Wallet deep link');
-        openUrl(`trust://wc?uri=${encodeURIComponent(uri)}`);
-      }
-
-      // Ждём подтверждение от пользователя (5 минут таймаут)
-      console.log('Waiting for approval...');
-      const session = await Promise.race([
-        approval(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout - попробуйте снова')), 300000)
-        ),
-      ]);
-
-      if (!session) {
-        throw new Error('Сессия не создана');
-      }
-
-      console.log('Session approved!');
-
-      // Получаем адрес из сессии
-      const accounts = (session as any).namespaces.eip155?.accounts;
-      if (!accounts || accounts.length === 0) {
-        throw new Error('Нет аккаунтов в сессии');
-      }
-
-      // Формат: "eip155:137:0xABC..."
-      const address = accounts[0].split(':').pop();
-      console.log('Got address from WC:', address);
-
-      // Создаём провайдер через WalletConnect
-      const wcProvider = {
-        request: async (req: { method: string; params?: any[] }) => {
-          return signClientRef.current.request({
-            topic: (session as any).topic,
-            chainId: 'eip155:137',
-            request: req,
-          });
-        },
-      };
-
-      const provider = new ethers.providers.Web3Provider(wcProvider as any, 'any');
-
-      setWallet({
-        isConnected: true,
-        address: address,
-        chainId: 137,
-        signer: provider.getSigner(),
-        provider: provider,
-        walletType: walletType,
-        isReadOnly: false,
-      });
-
-      setCurrentUser({
-        id: address!,
-        name: `${address!.slice(0, 6)}...${address!.slice(-4)}`,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
-      });
-
+      await _finishConnect(connection);
     } catch (err: any) {
-      console.error('Connection error:', err);
+      console.error('❌ Ошибка подключения:', err);
       setError(err.message || 'Ошибка подключения');
       throw err;
     } finally {
       setIsConnecting(false);
+      walletService.onDisplayUri = null;
     }
-  }, [setWallet, setCurrentUser]);
+  }, [_finishConnect]);
 
-  const disconnect = useCallback(async () => {
-    if (signClientRef.current) {
-      try {
-        // Отключаем WalletConnect если есть активная сессия
-      } catch (e) {}
+  // ── AliTerra (read-only) ───────────────────────────────────────────────────
+  const connectAliTerra = useCallback(async (address: string) => {
+    setIsConnecting(true);
+    setError(null);
+    try {
+      const connection = walletService.createReadOnlyConnection(address);
+      await _finishConnect(connection);
+    } catch (err: any) {
+      setError(err.message || 'Ошибка');
+      throw err;
+    } finally {
+      setIsConnecting(false);
     }
-    signClientRef.current = null;
+  }, [_finishConnect]);
+
+  const openAliTerraWallet = useCallback((onAddress: (a: string) => void) => {
+    return walletService.openAliTerraWallet(onAddress);
+  }, []);
+
+  // ── "Я подтвердил" — ручная проверка сессии после deep link ──────────────
+  const checkAndFinishSession = useCallback(async (
+    walletType: 'metamask' | 'trust' | 'walletconnect'
+  ): Promise<boolean> => {
+    try {
+      await walletService.reconnectRelay();
+      const accounts = await walletService.tryGetAccounts();
+      if (!accounts.length) return false;
+      const connection = await walletService.connectFromExistingSession(walletType);
+      await _finishConnect(connection);
+      walletService.forceResolveSession();
+      return true;
+    } catch (err: any) {
+      console.error('checkAndFinishSession:', err);
+      return false;
+    }
+  }, [_finishConnect]);
+
+  // ── Open deep link (с QR URI) ─────────────────────────────────────────────
+  const openDeepLink = useCallback((wallet: 'metamask' | 'trust' | 'walletconnect') => {
+    if (!wcUri) return false;
+    return walletService.openDeepLink(wcUri, wallet);
+  }, [wcUri]);
+
+  // ── Retry XMTP вручную ────────────────────────────────────────────────────
+  const retryXmtp = useCallback(async () => {
+    const signer = store.wallet?.signer;
+    if (!signer || xmtpService.isReady()) return;
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    setXmtpStatus('connecting');
+    const ok = await xmtpService.initialize(signer as any);
+    setXmtpStatus(ok ? 'connected' : 'error');
+    if (!ok) retryTimerRef.current = setTimeout(retryXmtp, 30000);
+  }, [store.wallet?.signer]);
+
+  // ── Отключение ────────────────────────────────────────────────────────────
+  const disconnect = useCallback(async () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    try { await walletService.disconnect(); } catch (_) {}
+    xmtpService.disconnect();
+    setXmtpStatus('idle');
     disconnectWallet();
     setError(null);
     setWcUri(null);
   }, [disconnectWallet]);
 
+  const cancelConnect = useCallback(async () => {
+    try { await walletService.cancelConnect(); } catch (_) {}
+    setIsConnecting(false);
+    setError(null);
+    setWcUri(null);
+  }, []);
+
+  // Очистка таймеров при unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
+
   return {
     connect,
+    connectAliTerra,
+    openAliTerraWallet,
+    checkAndFinishSession,
     disconnect,
+    cancelConnect,
     isConnecting,
     error,
     wcUri,
+    xmtpStatus,
+    retryXmtp,
+    isMobile: walletService.isMobile(),
+    isCapacitor: walletService.isCapacitor(),
+    hasMetaMask: walletService.hasMetaMask(),
   };
 }
