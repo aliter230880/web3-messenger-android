@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ethers } from 'ethers';
 import { 
   Search, Edit, Phone, Video, MoreVertical, Send, Smile, Paperclip, Mic,
   Check, CheckCheck, ArrowLeft, LogOut, Wallet, Shield, Globe, Lock,
@@ -146,14 +145,13 @@ export default function App() {
               try {
                 const accounts = await ethereum.request({ method: 'eth_accounts' });
                 if (accounts?.length > 0 && accounts[0].toLowerCase() === savedWallet.address.toLowerCase()) {
-                  const provider = new ethers.providers.Web3Provider(ethereum, 'any');
-                  const signer = provider.getSigner();
+                  // Авто-подключение без ethers
                   store.setWallet({
                     isConnected: true,
                     address: accounts[0],
                     chainId: 137,
-                    signer,
-                    provider,
+                    signer: null,
+                    provider: null,
                     walletType: savedWallet.type || 'metamask',
                     isReadOnly: false,
                   });
