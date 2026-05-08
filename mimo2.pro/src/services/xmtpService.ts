@@ -28,16 +28,23 @@ class XmtpService {
     }
   }
 
-  // Инициализация XMTP клиента
+  // Инициализация XMTP клиента с timeout
   async initialize(signer: ethers.Signer): Promise<boolean> {
     try {
       console.log('XMTP: Loading library...');
       const Client = await this.loadXmtp();
       
       console.log('XMTP: Initializing client...');
-      this.client = await Client.create(signer, { 
-        env: 'production',
-      });
+      
+      // Timeout 15 секунд для инициализации
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('XMTP timeout')), 15000)
+      );
+      
+      this.client = await Promise.race([
+        Client.create(signer, { env: 'production' }),
+        timeoutPromise
+      ]);
       
       this.isInitialized = true;
       console.log('XMTP: Initialized for address', this.client.address);
@@ -46,6 +53,7 @@ class XmtpService {
     } catch (error) {
       console.error('XMTP initialization failed:', error);
       this.isInitialized = false;
+      this.client = null;
       return false;
     }
   }
