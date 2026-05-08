@@ -257,7 +257,12 @@ export default function App() {
 
   // Подключение кошелька
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
-    if (isConnectingWallet) return;
+    console.log('handleConnectWallet called:', walletType);
+    
+    if (isConnectingWallet) {
+      console.log('Already connecting, return');
+      return;
+    }
     
     // AliTerra - открываем модалку
     if (walletType === 'aliterra') {
@@ -266,11 +271,14 @@ export default function App() {
       return;
     }
     
+    console.log('Setting screen to connecting');
     setWalletScreen('connecting');
     setIsConnectingWallet(true);
     
     try {
+      console.log('Calling connect...');
       await connect(walletType);
+      console.log('Connect success!');
       setWalletScreen('success');
       setTimeout(() => { 
         setShowWalletModal(false); 
@@ -278,7 +286,6 @@ export default function App() {
       }, 1500);
     } catch (err: any) {
       console.error('Connect error:', err);
-      // Возвращаемся к picker при любой ошибке
       setWalletScreen('picker');
     } finally {
       setIsConnectingWallet(false);
