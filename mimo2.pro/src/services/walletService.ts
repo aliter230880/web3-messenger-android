@@ -1,277 +1,386 @@
-// Wallet Service - РЕАЛЬНАЯ интеграция с кошельками
-// Based on CONTEXT.md from web3-messenger-android
+// walletService.ts — исправленная версия
+// ИСПРАВЛЕНИЯ:
+//   1. EthereumProvider вместо SignClient — аккаунты кэшируются локально, нет лишних relay round-trips
+//   2. 3-слойное восстановление сессии (connect promise + SDK events + visibilitychange)
+//   3. Retry до 3x при сетевых ошибках + clearWCStorage между попытками
+//   4. openDeepLink: window.open(_system) в Capacitor — не перезагружает WebView
 
 import { ethers } from 'ethers';
 
-// Constants
 const POLYGON_CHAIN_ID = 137;
-const POLYGON_RPC_URL = 'https://polygon-rpc.com';
+const POLYGON_PARAMS = {
+  chainId: '0x89',
+  chainName: 'Polygon Mainnet',
+  nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+  rpcUrls: ['https://polygon-rpc.com'],
+  blockExplorerUrls: ['https://polygonscan.com'],
+};
 const WC_PROJECT_ID = '2de1d724533083c2ed68197548dead4e';
-
-// Smart Contracts
-const LOGIN_FACTORY_ADDRESS = '0xF3D8c9B1e209DD3b8f2F70a1A896f3F3f5cd77C8';
-const LOGIN_FACTORY_ABI = [
-  'function createLogin(string memory provider, string memory socialId, string memory username) external returns (address)',
-  'function getLogin(address user) external view returns (string memory provider, string memory socialId, string memory username, address wallet)',
-];
+const APP_URL = 'https://chat.aliterra.space';
+const WC_INIT_TIMEOUT_MS = 20_000;
+const WC_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
+const WC_MAX_RETRIES = 3;
 
 export interface WalletConnection {
-  provider: ethers.providers.Web3Provider;
-  signer: ethers.Signer;
+  provider: ethers.providers.Web3Provider | null;
+  signer: ethers.Signer | null;
   address: string;
   walletType: string;
+  readOnly?: boolean;
 }
 
-// Event emitter for QR URI
 type DisplayUriCallback = (uri: string) => void;
-let displayUriCallback: DisplayUriCallback | null = null;
 
 class WalletService {
   private wcProvider: any = null;
-  private wcSignClient: any = null;
-  private sessionTopic: string | null = null;
+  private _sessionResolve: (() => void) | null = null;
+  private _visibilityHandler: (() => void) | null = null;
+  private _aborted = false;
 
-  // Set callback for when WalletConnect URI is ready
-  set onDisplayUri(callback: DisplayUriCallback | null) {
-    displayUriCallback = callback;
-  }
+  public onDisplayUri: DisplayUriCallback | null = null;
 
-  // Platform detection
-  isMobile(): boolean {
-    if (typeof window === 'undefined') return false;
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  }
-
+  // ── Определение платформы ──────────────────────────────────────────────────
   isCapacitor(): boolean {
     return typeof (window as any).Capacitor !== 'undefined';
   }
 
+  isMobile(): boolean {
+    return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+  }
+
   hasMetaMask(): boolean {
-    const eth = (window as any).ethereum;
-    if (!eth) return false;
-    // Check if it's MetaMask specifically
-    return eth.isMetaMask === true;
+    return typeof window !== 'undefined' && Boolean((window as any).ethereum?.isMetaMask);
   }
 
-  // Open URL - respects Capacitor environment
-  openUrl(url: string): void {
-    if (this.isCapacitor()) {
-      // In Capacitor/APK, use system intent to avoid WebView reload
-      window.open(url, '_system');
-    } else {
-      // In regular browser
-      window.open(url, '_blank');
-    }
-  }
-
-  // Connect via MetaMask (desktop extension or mobile deep link)
-  async connectMetaMask(): Promise<WalletConnection> {
-    // Check if MetaMask extension is available
-    if (this.hasMetaMask() && !this.isMobile()) {
-      // Desktop: use browser extension directly
-      const ethereum = (window as any).ethereum;
-      
-      try {
-        // Request accounts
-        await ethereum.request({ method: 'eth_requestAccounts' });
-        
-        const provider = new ethers.providers.Web3Provider(ethereum, 'any');
-        
-        // Switch to Polygon
-        await this.switchToPolygon(provider);
-        
-        const signer = provider.getSigner();
-        const address = await signer.getAddress();
-        
-        return { provider, signer, address, walletType: 'metamask' };
-      } catch (error: any) {
-        throw new Error(error.message || 'Failed to connect MetaMask');
-      }
-    }
-
-    // Mobile or no extension: use WalletConnect with MetaMask deep link
-    return this.connectWalletConnect('metamask');
-  }
-
-  // Connect via Trust Wallet
-  async connectTrust(): Promise<WalletConnection> {
-    return this.connectWalletConnect('trustwallet');
-  }
-
-  // Universal WalletConnect connection
-  async connectWalletConnect(walletType?: string): Promise<WalletConnection> {
-    try {
-      // Dynamically import WalletConnect
-      const { SignClient } = await import('@walletconnect/sign-client');
-      
-      // Initialize SignClient
-      this.wcSignClient = await SignClient.init({
-        projectId: WC_PROJECT_ID,
-        metadata: {
-          name: 'Web3Gram',
-          description: 'Secure Web3 Messenger',
-          url: 'https://chat.aliterra.space',
-          icons: ['https://chat.aliterra.space/icon.png'],
-        },
-      });
-
-      // Create session
-      const { uri, approval } = await this.wcSignClient.connect({
-        requiredNamespaces: {
-          eip155: {
-            methods: [
-              'eth_sendTransaction',
-              'eth_signTransaction',
-              'eth_sign',
-              'personal_sign',
-              'eth_signTypedData',
-            ],
-            chains: ['eip155:' + POLYGON_CHAIN_ID],
-            events: ['chainChanged', 'accountsChanged'],
-          },
-        },
-      });
-
-      // If URI is available, open wallet
-      if (uri) {
-        // Generate QR code data
-        if (displayUriCallback) {
-          displayUriCallback(uri);
-        }
-
-        // Open wallet deep link on mobile
-        if (this.isMobile()) {
-          this.openWalletDeepLink(uri, walletType || 'walletconnect');
-        }
-      }
-
-      // Wait for approval (user confirms in wallet)
-      const session = await Promise.race([
-        approval(),
-        this.timeout(300000), // 5 minute timeout
-      ]);
-
-      if (!session) {
-        throw new Error('Connection timeout - please try again');
-      }
-
-      this.sessionTopic = session.topic;
-
-      // Get accounts from session
-      const accounts = session.namespaces.eip155.accounts;
-      if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found in session');
-      }
-
-      // Parse address from account (format: "eip155:137:0x...")
-      const account = accounts[0];
-      const address = account.split(':').pop() || '';
-
-      // Create provider using WalletConnect
-      const provider = this.createWCProvider();
-      
-      // Switch to Polygon
-      await this.switchToPolygon(provider);
-
-      const signer = provider.getSigner();
-
-      return { provider, signer, address, walletType: walletType || 'walletconnect' };
-    } catch (error: any) {
-      console.error('WalletConnect error:', error);
-      throw new Error(error.message || 'Failed to connect wallet');
-    }
-  }
-
-  // Open wallet app via deep link
-  private openWalletDeepLink(uri: string, walletType: string): void {
+  // ── Deep link ─────────────────────────────────────────────────────────────
+  // Capacitor: '_system' → Android Intent — НЕ перезагружает WebView
+  // Browser: '_blank' → custom scheme
+  openDeepLink(uri: string, wallet: 'metamask' | 'trust' | 'walletconnect'): boolean {
     const encoded = encodeURIComponent(uri);
-    let deepLink: string;
-
-    switch (walletType) {
-      case 'metamask':
-        // MetaMask mobile deep link
-        deepLink = `metamask://wc?uri=${encoded}`;
-        break;
-      case 'trustwallet':
-        // Trust Wallet deep link
-        deepLink = `trust://wc?uri=${encoded}`;
-        break;
-      default:
-        // Generic WalletConnect URI (works with many wallets)
-        deepLink = `wc:${uri}`;
-    }
-
-    console.log('Opening deep link:', deepLink);
-    this.openUrl(deepLink);
-  }
-
-  // Create provider for WalletConnect session
-  private createWCProvider(): ethers.providers.Web3Provider {
-    // Create a custom provider that sends requests through WalletConnect
-    const wcProvider = {
-      request: async (request: { method: string; params?: any[] }) => {
-        if (!this.wcSignClient || !this.sessionTopic) {
-          throw new Error('WalletConnect not connected');
-        }
-
-        const result = await this.wcSignClient.request({
-          topic: this.sessionTopic,
-          chainId: 'eip155:' + POLYGON_CHAIN_ID,
-          request,
-        });
-
-        return result;
-      },
-    };
-
-    // Wrap in Web3Provider
-    return new ethers.providers.Web3Provider(wcProvider as any, 'any');
-  }
-
-  // Switch network to Polygon
-  async switchToPolygon(provider: ethers.providers.Web3Provider): Promise<void> {
+    let url: string;
+    if (wallet === 'metamask') url = `metamask://wc?uri=${encoded}`;
+    else if (wallet === 'trust') url = `trust://wc?uri=${encoded}`;
+    else url = uri;
     try {
-      const network = await provider.getNetwork();
-      if (network.chainId === POLYGON_CHAIN_ID) return;
-
-      await provider.send('wallet_switchEthereumChain', [{ chainId: '0x89' }]);
-    } catch (error: any) {
-      if (error.code === 4902) {
-        // Polygon not added, add it
-        await provider.send('wallet_addEthereumChain', [{
-          chainId: '0x89',
-          chainName: 'Polygon Mainnet',
-          nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-          rpcUrls: ['https://polygon-rpc.com', 'https://polygon-mainnet.g.alchemy.com/v2/demo'],
-          blockExplorerUrls: ['https://polygonscan.com'],
-        }]);
+      if (this.isCapacitor()) {
+        (window as any).open(url, '_system');
       } else {
-        // Non-critical error, might work anyway
-        console.warn('Network switch error:', error);
+        window.open(url, '_blank', 'noreferrer noopener');
       }
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  // Timeout helper
-  private timeout(ms: number): Promise<null> {
-    return new Promise((resolve) => setTimeout(() => resolve(null), ms));
+  openWalletApp(wallet: 'metamask' | 'trust'): void {
+    const url = wallet === 'metamask' ? 'metamask://' : 'trust://';
+    if (this.isCapacitor()) (window as any).open(url, '_system');
+    else window.open(url, '_blank', 'noreferrer noopener');
   }
 
-  // Disconnect
-  async disconnect(): Promise<void> {
-    if (this.wcSignClient && this.sessionTopic) {
+  // ── Reconnect relay после возврата из кошелька ────────────────────────────
+  async reconnectRelay(): Promise<void> {
+    if (!this.wcProvider) return;
+    try {
+      await Promise.race([this._doReconnect(), new Promise<void>(r => setTimeout(r, 5000))]);
+    } catch (_) {}
+  }
+
+  private async _doReconnect(): Promise<void> {
+    const core = (this.wcProvider as any)?.signer?.client?.core || (this.wcProvider as any)?.core;
+    const relayer = core?.relayer;
+    if (!relayer) return;
+    if (typeof relayer.restartTransport === 'function') await relayer.restartTransport();
+    else if (typeof relayer.transportClose === 'function') {
+      try { await relayer.transportClose(); } catch (_) {}
+      await relayer.transportOpen?.();
+    } else if (typeof relayer.connect === 'function') await relayer.connect();
+  }
+
+  // ── Получить аккаунты из существующей WC сессии ──────────────────────────
+  async tryGetAccounts(): Promise<string[]> {
+    if (!this.wcProvider) return [];
+    // Сначала читаем из session объекта — мгновенно, без RPC
+    try {
+      const ns = (this.wcProvider as any)?.session?.namespaces;
+      if (ns) {
+        const all: string[] = [];
+        for (const key of Object.keys(ns)) {
+          for (const a of ns[key]?.accounts || []) {
+            const parts = a.split(':');
+            const addr = parts[parts.length - 1];
+            if (addr?.startsWith('0x')) all.push(addr);
+          }
+        }
+        if (all.length) return [...new Set(all)];
+      }
+    } catch (_) {}
+    try {
+      const direct = (this.wcProvider as any)?.accounts;
+      if (Array.isArray(direct) && direct.length) return direct.filter(Boolean);
+    } catch (_) {}
+    // Fallback: eth_accounts RPC
+    try {
+      const accounts = await Promise.race([
+        this.wcProvider.request({ method: 'eth_accounts' }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+      ]);
+      return Array.isArray(accounts) ? accounts.filter(Boolean) : [];
+    } catch { return []; }
+  }
+
+  forceResolveSession(): boolean {
+    if (this._sessionResolve) {
+      this._sessionResolve();
+      this._sessionResolve = null;
+      return true;
+    }
+    return false;
+  }
+
+  // ── Подключение из существующей WC сессии (без нового connect()) ──────────
+  async connectFromExistingSession(wallet: string): Promise<WalletConnection> {
+    if (!this.wcProvider) throw new Error('Нет активной WalletConnect сессии');
+    const accounts = await this.tryGetAccounts();
+    if (!accounts.length) throw new Error('Адрес кошелька не найден в сессии');
+    const address = accounts[0];
+    const provider = new ethers.providers.Web3Provider(this.wcProvider as any, 'any');
+    await Promise.race([
+      this._switchToPolygon(provider).catch((e: Error) => console.warn('[WC] switch skipped:', e.message)),
+      new Promise<void>(r => setTimeout(r, 8000)),
+    ]);
+    const signer = provider.getSigner();
+    return { provider, signer, address, walletType: wallet };
+  }
+
+  // ── MetaMask ───────────────────────────────────────────────────────────────
+  async connectMetaMask(): Promise<WalletConnection> {
+    if (!this.isCapacitor() && !this.isMobile() && this.hasMetaMask()) {
+      const eth = (window as any).ethereum;
+      const provider = new ethers.providers.Web3Provider(eth, 'any');
+      await provider.send('eth_requestAccounts', []);
+      await this._switchToPolygon(provider);
+      const signer = provider.getSigner();
+      const address = await signer.getAddress();
+      return { provider, signer, address, walletType: 'metamask' };
+    }
+    return this._connectWC('metamask');
+  }
+
+  async connectTrust(): Promise<WalletConnection> {
+    return this._connectWC('trust');
+  }
+
+  async connectWalletConnect(): Promise<WalletConnection> {
+    return this._connectWC('walletconnect');
+  }
+
+  // ── WalletConnect ──────────────────────────────────────────────────────────
+  private async _connectWC(wallet: string): Promise<WalletConnection> {
+    this._aborted = false;
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= WC_MAX_RETRIES; attempt++) {
+      if (this._aborted) break;
       try {
-        await this.wcSignClient.disconnect({
-          topic: this.sessionTopic,
-          reason: { code: 6000, message: 'User disconnected' },
-        });
-      } catch (e) {
-        console.warn('Disconnect error:', e);
+        return await this._connectWCOnce(wallet, attempt);
+      } catch (err: any) {
+        lastErr = err;
+        const msg: string = err?.message || '';
+        const retryable = msg.includes('Failed to publish') || msg.includes('WebSocket')
+          || msg.includes('relay') || msg.includes('tag:undefined')
+          || msg.includes('не отвечает') || msg.includes('No internet');
+        if (!retryable || attempt >= WC_MAX_RETRIES || this._aborted) throw err;
+        console.warn(`[WC] attempt ${attempt} failed, retrying…`);
+        await this._sleep(attempt * 1500);
+        await this._clearWCStorage();
       }
     }
-    this.wcProvider = null;
-    this.wcSignClient = null;
-    this.sessionTopic = null;
+    throw lastErr || new Error('Не удалось подключиться к WalletConnect');
+  }
+
+  private async _connectWCOnce(wallet: string, attempt: number): Promise<WalletConnection> {
+    await this._cleanupWC();
+
+    const { EthereumProvider } = await import('@walletconnect/ethereum-provider');
+
+    const initPromise = EthereumProvider.init({
+      projectId: WC_PROJECT_ID,
+      chains: [POLYGON_CHAIN_ID],
+      showQrModal: false,
+      metadata: {
+        name: 'Web3Gram',
+        description: 'Secure Web3 Messenger on Polygon',
+        url: APP_URL,
+        icons: [`${APP_URL}/favicon.ico`],
+      },
+    });
+
+    this.wcProvider = await Promise.race([
+      initPromise,
+      new Promise<never>((_, rej) => setTimeout(() => rej(
+        new Error(`WalletConnect не отвечает (${attempt > 1 ? 'попытка ' + attempt + ': ' : ''}${WC_INIT_TIMEOUT_MS / 1000}с). Проверьте интернет.`)
+      ), WC_INIT_TIMEOUT_MS)),
+    ]);
+
+    // display_uri — как только pairing URI готов
+    this.wcProvider.on('display_uri', (uri: string) => {
+      try { this.onDisplayUri?.(uri); } catch (_) {}
+    });
+
+    // ── 3-слойное ожидание подтверждения ──────────────────────────────────
+    const sessionPromise = new Promise<void>((resolve, reject) => {
+      this._sessionResolve = resolve;
+      let done = false;
+      const ok = () => { if (done) return; done = true; this._sessionResolve = null; resolve(); };
+      const fail = (e: Error) => { if (done) return; done = true; this._sessionResolve = null; reject(e); };
+
+      // Слой 1: connect() promise
+      this.wcProvider.connect().then(ok).catch(fail);
+      // Слой 2а: SDK connect event
+      this.wcProvider.on('connect', () => ok());
+      // Слой 2б: session_update event
+      this.wcProvider.on('session_update', () => { if (this.wcProvider?.session) ok(); });
+      // Таймаут 5 минут
+      setTimeout(() => fail(new Error('Сессия не установлена за 5 минут. Нажмите «Я подтвердил».')), WC_SESSION_TIMEOUT_MS);
+    });
+
+    // Слой 3: visibilitychange → reconnect relay → check session
+    this._removeVisibilityHandler();
+    const handler = async () => {
+      if (document.hidden || !this.wcProvider) return;
+      try {
+        await this.reconnectRelay();
+        await this._sleep(2000);
+        if (this.wcProvider?.session && this._sessionResolve) {
+          this._sessionResolve();
+          this._sessionResolve = null;
+        }
+      } catch (_) {}
+    };
+    this._visibilityHandler = handler;
+    document.addEventListener('visibilitychange', handler);
+    window.addEventListener('focus', handler);
+
+    try {
+      await sessionPromise;
+    } finally {
+      this._removeVisibilityHandler();
+      this.onDisplayUri = null;
+    }
+
+    const provider = new ethers.providers.Web3Provider(this.wcProvider as any, 'any');
+    await this._switchToPolygon(provider);
+    const signer = provider.getSigner();
+    const address = await signer.getAddress();
+
+    this.wcProvider.on('disconnect', () => { this.wcProvider = null; });
+
+    return { provider, signer, address, walletType: wallet };
+  }
+
+  // ── AliTerra (read-only) ──────────────────────────────────────────────────
+  createReadOnlyConnection(address: string): WalletConnection {
+    return { provider: null, signer: null, address, walletType: 'aliterra', readOnly: true };
+  }
+
+  openAliTerraWallet(onAddress: (address: string) => void): () => void {
+    if (this.isCapacitor()) {
+      const returnUrl = encodeURIComponent(window.location.origin + '?w3g_from=aliterra');
+      (window as any).open(`https://wallet.aliterra.space/?from=web3gram&return=${returnUrl}`, '_system');
+      return () => {};
+    }
+    const listener = (ev: MessageEvent) => {
+      if (ev.data?.type === 'WEB3GRAM_ADDRESS' && ev.data?.address?.startsWith('0x')) {
+        window.removeEventListener('message', listener);
+        onAddress(ev.data.address);
+      }
+    };
+    window.addEventListener('message', listener);
+    const w = window.open('https://wallet.aliterra.space/?from=web3gram', 'aliterra_wallet', 'width=440,height=680,noopener=false');
+    if (!w) window.open('https://wallet.aliterra.space/?from=web3gram', '_blank');
+    return () => window.removeEventListener('message', listener);
+  }
+
+  // ── Disconnect ────────────────────────────────────────────────────────────
+  async disconnect(): Promise<void> {
+    this._aborted = true;
+    this._sessionResolve = null;
+    this._removeVisibilityHandler();
+    await this._cleanupWC();
+    this.onDisplayUri = null;
+  }
+
+  async cancelConnect(): Promise<void> {
+    this._aborted = true;
+    this._sessionResolve = null;
+    this._removeVisibilityHandler();
+    await this._cleanupWC();
+    this.onDisplayUri = null;
+  }
+
+  // ── Internals ─────────────────────────────────────────────────────────────
+  private _sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+  private async _clearWCStorage(): Promise<void> {
+    try {
+      const dbs = await indexedDB.databases?.() || [];
+      for (const db of dbs) {
+        if (db.name && (db.name.includes('WALLET_CONNECT') || db.name.includes('wc@2'))) {
+          indexedDB.deleteDatabase(db.name);
+        }
+      }
+      const toRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('wc@2') || k.startsWith('WALLET_CONNECT'))) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+    } catch (_) {}
+  }
+
+  private _removeVisibilityHandler(): void {
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      window.removeEventListener('focus', this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+  }
+
+  private async _cleanupWC(): Promise<void> {
+    if (this.wcProvider) {
+      try { await this.wcProvider.disconnect(); } catch (_) {}
+      this.wcProvider = null;
+    }
+  }
+
+  private async _switchToPolygon(provider: ethers.providers.Web3Provider, maxRetries = 4): Promise<void> {
+    let lastErr: Error | null = null;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const net = await provider.getNetwork();
+        if (net.chainId === POLYGON_CHAIN_ID) return;
+        try {
+          await provider.send('wallet_switchEthereumChain', [{ chainId: '0x89' }]);
+          return;
+        } catch (err: any) {
+          if (err.code === 4902 || err?.data?.originalError?.code === 4902) {
+            await provider.send('wallet_addEthereumChain', [POLYGON_PARAMS]);
+            return;
+          }
+          throw new Error('Переключитесь на Polygon Mainnet в кошельке');
+        }
+      } catch (err: any) {
+        const msg = err?.message || '';
+        if (msg.includes('noNetwork') || msg.includes('NETWORK_ERROR') || msg.includes('could not detect network')) {
+          lastErr = err;
+          await this._sleep(1500 * (i + 1));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr || new Error('Не удалось определить сеть');
   }
 }
 
