@@ -1,6 +1,4 @@
-// XMTP Service - E2E encrypted messaging via XMTP protocol
-// Based on CONTEXT.md architecture
-
+// XMTP Service - с динамическим импортом для совместимости
 import { ethers } from 'ethers';
 
 export interface XmtpMessage {
@@ -9,172 +7,205 @@ export interface XmtpMessage {
   senderAddress: string;
   recipientAddress: string;
   timestamp: number;
-  contentType: string;
-}
-
-export interface XmtpConversation {
-  peerAddress: string;
-  topic: string;
-  createdAt: number;
 }
 
 class XmtpService {
   private client: any = null;
   private isInitialized = false;
-  private messageListeners: Map<string, (message: XmtpMessage) => void> = new Map();
+  private conversations: Map<string, any> = new Map();
+  private Client: any = null;
 
-  // Initialize XMTP client with signer
-  async initialize(signer: ethers.Signer): Promise<void> {
+  // Динамический импорт XMTP
+  private async loadXmtp() {
+    if (this.Client) return this.Client;
     try {
-      // In production: use @xmtp/xmtp-js
-      // const xmtp = await Client.create(signer, { env: 'production', skipContactPublishing: true });
-      // this.client = xmtp;
-      
-      // For demo: simulate initialization
-      console.log('XMTP: Initializing with signer...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const address = await signer.getAddress();
-      console.log('XMTP: Initialized for address', address);
-      
-      this.isInitialized = true;
+      const xmtp = await import('@xmtp/xmtp-js');
+      this.Client = xmtp.Client;
+      return this.Client;
     } catch (error) {
-      console.error('XMTP initialization failed:', error);
-      throw error;
+      console.error('Failed to load XMTP:', error);
+      throw new Error('XMTP library not available');
     }
   }
 
-  // Check if XMTP is ready
+  // Инициализация XMTP клиента
+  async initialize(signer: ethers.Signer): Promise<boolean> {
+    try {
+      console.log('XMTP: Loading library...');
+      const Client = await this.loadXmtp();
+      
+      console.log('XMTP: Initializing client...');
+      this.client = await Client.create(signer, { 
+        env: 'production',
+      });
+      
+      this.isInitialized = true;
+      console.log('XMTP: Initialized for address', this.client.address);
+      
+      return true;
+    } catch (error) {
+      console.error('XMTP initialization failed:', error);
+      this.isInitialized = false;
+      return false;
+    }
+  }
+
+  // Проверка статуса
   isReady(): boolean {
     return this.isInitialized && this.client !== null;
   }
 
-  // Check if address can receive XMTP messages
-  async canMessage(address: string): Promise<boolean> {
-    // In production: await this.client.canMessage(address)
-    // For demo: always return true
-    return ethers.utils.isAddress(address);
+  // Проверка может ли адрес принимать XMTP сообщения
+  async canMessage(peerAddress: string): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      return await this.client.canMessage(peerAddress);
+    } catch {
+      return false;
+    }
   }
 
-  // Get or create conversation with peer
-  async getConversation(peerAddress: string): Promise<XmtpConversation> {
-    if (!this.isInitialized) {
-      throw new Error('XMTP not initialized');
+  // Получить или создать диалог
+  async getConversation(peerAddress: string): Promise<any> {
+    if (!this.client) throw new Error('XMTP not initialized');
+    
+    if (this.conversations.has(peerAddress)) {
+      return this.conversations.get(peerAddress);
     }
+    
+    const conversation = await this.client.conversations.newConversation(peerAddress);
+    this.conversations.set(peerAddress, conversation);
+    
+    return conversation;
+  }
 
-    // In production:
-    // const conversation = await this.client.conversations.newConversation(peerAddress);
+  // Отправить сообщение
+  async sendMessage(peerAddress: string, content: string): Promise<XmtpMessage> {
+    if (!this.client) throw new Error('XMTP not initialized');
+    
+    const conversation = await this.getConversation(peerAddress);
+    const sent = await conversation.send(content);
     
     return {
-      peerAddress,
-      topic: `/xmtp/0/${peerAddress}/proto`,
-      createdAt: Date.now(),
-    };
-  }
-
-  // Send message
-  async sendMessage(peerAddress: string, content: string): Promise<XmtpMessage> {
-    if (!this.isInitialized) {
-      throw new Error('XMTP not initialized');
-    }
-
-    // In production:
-    // const conversation = await this.client.conversations.newConversation(peerAddress);
-    // const sent = await conversation.send(content);
-
-    const message: XmtpMessage = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      content,
-      senderAddress: await this.getSignerAddress(),
+      id: sent.id,
+      content: sent.content,
+      senderAddress: this.client.address,
       recipientAddress: peerAddress,
-      timestamp: Date.now(),
-      contentType: 'text',
+      timestamp: sent.sent.getTime(),
     };
-
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 200));
-
-    return message;
   }
 
-  // Get messages from conversation
-  async getMessages(_peerAddress: string, _limit: number = 50): Promise<XmtpMessage[]> {
-    if (!this.isInitialized) {
-      return [];
-    }
-
-    // In production:
-    // const conversation = await this.client.conversations.newConversation(peerAddress);
-    // const messages = await conversation.messages({ limit });
+  // Получить сообщения из диалога
+  async getMessages(peerAddress: string, limit: number = 50): Promise<XmtpMessage[]> {
+    if (!this.client) return [];
     
-    // For demo: return empty array (messages come from local store)
-    return [];
+    try {
+      const conversation = await this.getConversation(peerAddress);
+      const messages = await conversation.messages({ limit });
+      
+      return messages.map((msg: any) => ({
+        id: msg.id,
+        content: msg.content,
+        senderAddress: msg.senderAddress,
+        recipientAddress: msg.recipientAddress || peerAddress,
+        timestamp: msg.sent.getTime(),
+      }));
+    } catch (error) {
+      console.error('Failed to get messages:', error);
+      return [];
+    }
   }
 
-  // Subscribe to all messages
-  subscribeToAllMessages(callback: (message: XmtpMessage) => void): () => void {
-    const listenerId = `listener_${Date.now()}`;
-    this.messageListeners.set(listenerId, callback);
-
-    // In production:
-    // const stream = await this.client.conversations.streamAllMessages();
-    // for await (const message of stream) {
-    //   callback(transformMessage(message));
-    // }
-
-    // Return unsubscribe function
+  // Подписка на новые сообщения в диалоге
+  async subscribeToConversation(
+    peerAddress: string,
+    callback: (message: XmtpMessage) => void
+  ): Promise<() => void> {
+    if (!this.client) throw new Error('XMTP not initialized');
+    
+    const conversation = await this.getConversation(peerAddress);
+    const stream = await conversation.streamMessages();
+    
+    const processStream = async () => {
+      try {
+        for await (const msg of stream) {
+          callback({
+            id: msg.id,
+            content: msg.content,
+            senderAddress: msg.senderAddress,
+            recipientAddress: msg.recipientAddress || peerAddress,
+            timestamp: msg.sent.getTime(),
+          });
+        }
+      } catch (error) {
+        console.error('Stream error:', error);
+      }
+    };
+    
+    processStream();
+    
     return () => {
-      this.messageListeners.delete(listenerId);
+      try {
+        stream.return(undefined);
+      } catch {}
     };
   }
 
-  // Subscribe to conversation messages
-  async subscribeToConversation(
-    _peerAddress: string,
-    _callback: (message: XmtpMessage) => void
+  // Подписка на ВСЕ новые сообщения
+  async subscribeToAllMessages(
+    callback: (message: XmtpMessage) => void
   ): Promise<() => void> {
-    // In production:
-    // const conversation = await this.client.conversations.newConversation(peerAddress);
-    // const stream = await conversation.streamMessages();
-    // for await (const message of stream) {
-    //   callback(transformMessage(message));
-    // }
-
-    return () => {};
+    if (!this.client) throw new Error('XMTP not initialized');
+    
+    const stream = await this.client.conversations.streamAllMessages();
+    
+    const processStream = async () => {
+      try {
+        for await (const msg of stream) {
+          callback({
+            id: msg.id,
+            content: msg.content,
+            senderAddress: msg.senderAddress,
+            recipientAddress: msg.recipientAddress || '',
+            timestamp: msg.sent.getTime(),
+          });
+        }
+      } catch (error) {
+        console.error('All messages stream error:', error);
+      }
+    };
+    
+    processStream();
+    
+    return () => {
+      try {
+        stream.return(undefined);
+      } catch {}
+    };
   }
 
-  // Get signer address (helper)
-  private async getSignerAddress(): Promise<string> {
-    // This would use the actual signer in production
-    return '0x0000000000000000000000000000000000000000';
-  }
-
-  // List all conversations
-  async listConversations(): Promise<XmtpConversation[]> {
-    if (!this.isInitialized) {
+  // Список всех диалогов
+  async listConversations(): Promise<string[]> {
+    if (!this.client) return [];
+    
+    try {
+      const conversations = await this.client.conversations.list();
+      return conversations.map((c: any) => c.peerAddress);
+    } catch {
       return [];
     }
-
-    // In production:
-    // const conversations = await this.client.conversations.list();
-    // return conversations.map(c => ({ peerAddress: c.peerAddress, topic: c.topic }));
-
-    return [];
   }
 
-  // Disconnect and cleanup
+  // Отключение
   disconnect(): void {
     this.client = null;
     this.isInitialized = false;
-    this.messageListeners.clear();
+    this.conversations.clear();
   }
 
-  // Get initialization status
-  getStatus(): { initialized: boolean; ready: boolean } {
-    return {
-      initialized: this.isInitialized,
-      ready: this.isReady(),
-    };
+  // Получить адрес текущего пользователя
+  getAddress(): string | null {
+    return this.client?.address || null;
   }
 }
 
