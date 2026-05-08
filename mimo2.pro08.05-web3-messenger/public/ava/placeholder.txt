@@ -1,0 +1,6 @@
+Скопируйте сюда файлы из папки ava репозитория:
+- ava (1).png до ava (22).png
+- ava1 (1).png до ava1 (6).png
+- metamask.png
+- trust.png
+- aliterra.png
