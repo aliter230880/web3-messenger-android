@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
-import { walletService } from './services/walletService';
 import { identityService } from './services/identityService';
 import { transferService } from './services/transferService';
 import { xmtpService } from './services/xmtpService';
@@ -762,15 +761,6 @@ export default function App() {
                     </motion.div>
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
-                    
-                    {/* Кнопка "Я подтвердил" - ручной bypass */}
-                    <button 
-                      onClick={() => walletService.forceResolveSession()}
-                      className="mb-4 px-6 py-2 bg-[#2f8af5] hover:bg-[#1a73e8] text-white rounded-xl text-sm transition-colors">
-                      Я подтвердил — завершить
-                    </button>
-                    
-                    <br />
                     <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
                       className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
                   </div>
