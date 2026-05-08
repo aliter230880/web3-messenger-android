@@ -20,10 +20,12 @@ export function useWallet(): UseWalletReturn {
   
   const { setWallet, setCurrentUser, disconnectWallet } = useStore();
 
+  // Определяем платформу
   const isMobile = () => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   };
 
+  // Открыть URL (нативно в Capacitor)
   const openUrl = (url: string) => {
     if (typeof (window as any).Capacitor !== 'undefined') {
       window.open(url, '_system');
@@ -39,19 +41,25 @@ export function useWallet(): UseWalletReturn {
 
     try {
       const ethereum = (window as any).ethereum;
+      const mobile = isMobile();
       
-      // БЫСТРЫЙ ПУТЬ: Если есть window.ethereum (расширение или Trust Wallet Browser)
-      if (ethereum) {
-        console.log('Using window.ethereum directly');
+      console.log('Wallet connect:', walletType, 'isMobile:', mobile, 'hasEthereum:', !!ethereum);
+
+      // ========== DESKTOP или MOBILE с window.ethereum ==========
+      if (ethereum && !mobile) {
+        console.log('Using window.ethereum (desktop extension)');
         
-        // Запрашиваем аккаунты
-        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+        // Запрашиваем аккаунты - это вызовет popup MetaMask
+        const accounts = await ethereum.request({ 
+          method: 'eth_requestAccounts' 
+        });
         
         if (!accounts || accounts.length === 0) {
           throw new Error('Нет аккаунтов');
         }
 
         const address = accounts[0];
+        console.log('Got address:', address);
         
         // Переключаемся на Polygon
         try {
@@ -83,7 +91,7 @@ export function useWallet(): UseWalletReturn {
           chainId: 137,
           signer: signer,
           provider: provider,
-          walletType: ethereum.isMetaMask ? 'metamask' : ethereum.isTrust ? 'trustwallet' : walletType,
+          walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet',
           isReadOnly: false,
         });
 
@@ -96,9 +104,10 @@ export function useWallet(): UseWalletReturn {
         return;
       }
 
-      // НЕТ window.ethereum - используем WalletConnect (для мобильных)
-      console.log('No window.ethereum, using WalletConnect');
+      // ========== MOBILE без window.ethereum ==========
+      console.log('Mobile mode - using WalletConnect');
       
+      // Инициализируем WalletConnect
       const { SignClient } = await import('@walletconnect/sign-client');
       
       signClientRef.current = await SignClient.init({
@@ -111,10 +120,17 @@ export function useWallet(): UseWalletReturn {
         },
       });
 
+      // Создаём сессию
       const { uri, approval } = await signClientRef.current.connect({
         requiredNamespaces: {
           eip155: {
-            methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
+            methods: [
+              'eth_sendTransaction',
+              'eth_signTransaction', 
+              'eth_sign',
+              'personal_sign',
+              'eth_signTypedData',
+            ],
             chains: ['eip155:137'],
             events: ['chainChanged', 'accountsChanged'],
           },
@@ -125,32 +141,44 @@ export function useWallet(): UseWalletReturn {
         throw new Error('Не удалось создать WalletConnect URI');
       }
 
+      console.log('WC URI created');
       setWcUri(uri);
 
-      // Открываем deep link
+      // Открываем deep link в зависимости от кошелька
       if (walletType === 'metamask') {
+        console.log('Opening MetaMask deep link');
         openUrl(`metamask://wc?uri=${encodeURIComponent(uri)}`);
       } else if (walletType === 'trustwallet') {
+        console.log('Opening Trust Wallet deep link');
         openUrl(`trust://wc?uri=${encodeURIComponent(uri)}`);
       }
 
-      // Ждём подтверждение
+      // Ждём подтверждение от пользователя (5 минут таймаут)
+      console.log('Waiting for approval...');
       const session = await Promise.race([
         approval(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 120000)),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout - попробуйте снова')), 300000)
+        ),
       ]);
 
       if (!session) {
         throw new Error('Сессия не создана');
       }
 
+      console.log('Session approved!');
+
+      // Получаем адрес из сессии
       const accounts = (session as any).namespaces.eip155?.accounts;
       if (!accounts || accounts.length === 0) {
-        throw new Error('Нет аккаунтов');
+        throw new Error('Нет аккаунтов в сессии');
       }
 
+      // Формат: "eip155:137:0xABC..."
       const address = accounts[0].split(':').pop();
+      console.log('Got address from WC:', address);
 
+      // Создаём провайдер через WalletConnect
       const wcProvider = {
         request: async (req: { method: string; params?: any[] }) => {
           return signClientRef.current.request({
@@ -191,7 +219,7 @@ export function useWallet(): UseWalletReturn {
   const disconnect = useCallback(async () => {
     if (signClientRef.current) {
       try {
-        // Отключаем WalletConnect если есть
+        // Отключаем WalletConnect если есть активная сессия
       } catch (e) {}
     }
     signClientRef.current = null;
