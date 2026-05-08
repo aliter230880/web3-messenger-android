@@ -24,7 +24,11 @@ import {
   Loader2,
   Copy,
   CheckCircle,
-  ExternalLink
+  ExternalLink,
+  Trash2,
+  Settings,
+  User,
+  Camera
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
@@ -101,6 +105,13 @@ const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
   </svg>
 );
 
+// Avatar options for profile
+const avatarOptions = [
+  'Ava', 'Bella', 'Charlie', 'Dusty', 'Eden', 'Felix', 'Ginger', 'Harley',
+  'Ivy', 'Jasper', 'Leo', 'Milo', 'Nala', 'Oscar', 'Patches', 'Rusty',
+  'Sasha', 'Tiger', 'Uma', 'Violet', 'Willow', 'Xena', 'Yuki', 'Zoe'
+];
+
 export default function App() {
   const store = useStore();
   const { connect, disconnect, wcUri, error: walletError } = useWallet();
@@ -111,14 +122,19 @@ export default function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [showAliTerraModal, setShowAliTerraModal] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
   const [walletScreen, setWalletScreen] = useState<'picker' | 'connecting' | 'deeplink' | 'success'>('picker');
   const [localChats, setLocalChats] = useState<Chat[]>(initialChats);
   const [localMessages, setLocalMessages] = useState<Record<string, Message[]>>(initialMessages);
   const [copied, setCopied] = useState(false);
   const [newChatAddress, setNewChatAddress] = useState('');
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [selectedWalletType, setSelectedWalletType] = useState<string | null>(null);
+  const [aliterraAddress, setAliterraAddress] = useState('');
+  const [showChatMenu, setShowChatMenu] = useState<string | null>(null);
+  const [userName, setUserName] = useState('');
+  const [userAvatar, setUserAvatar] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState('Ava');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentWalletAddress = store.wallet.address || '';
@@ -131,10 +147,17 @@ export default function App() {
 
   useEffect(() => {
     if (walletError && walletScreen === 'connecting') {
-      setConnectionError(walletError);
       setWalletScreen('deeplink');
     }
   }, [walletError, walletScreen]);
+
+  // Initialize profile from store
+  useEffect(() => {
+    if (store.currentUser) {
+      setUserName(store.currentUser.name || '');
+      setUserAvatar(store.currentUser.avatar || '');
+    }
+  }, [store.currentUser]);
 
   const handleSendMessage = () => {
     if (!messageInput.trim() || !selectedChatId) return;
@@ -165,6 +188,7 @@ export default function App() {
 
     setMessageInput('');
 
+    // Simulate delivery
     setTimeout(() => {
       setLocalMessages(prev => ({
         ...prev,
@@ -174,6 +198,7 @@ export default function App() {
       }));
     }, 500);
 
+    // Simulate read
     setTimeout(() => {
       setLocalMessages(prev => ({
         ...prev,
@@ -186,8 +211,13 @@ export default function App() {
 
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
     setWalletScreen('connecting');
-    setConnectionError(null);
-    setSelectedWalletType(walletType);
+    
+    if (walletType === 'aliterra') {
+      setShowWalletModal(false);
+      setShowAliTerraModal(true);
+      setWalletScreen('picker');
+      return;
+    }
     
     try {
       await connect(walletType);
@@ -197,8 +227,6 @@ export default function App() {
         setWalletScreen('picker');
       }, 1500);
     } catch (err: any) {
-      setConnectionError(err.message);
-      // Если это deep link ошибка, показываем экран с кнопками
       if (err.message.includes('Подтвердите')) {
         setWalletScreen('deeplink');
       } else {
@@ -207,11 +235,35 @@ export default function App() {
     }
   };
 
+  const handleAliTerraConnect = () => {
+    if (!aliterraAddress.trim() || !aliterraAddress.startsWith('0x')) {
+      alert('Введите корректный Ethereum адрес (начинается с 0x)');
+      return;
+    }
+
+    store.setWallet({
+      isConnected: true,
+      address: aliterraAddress,
+      chainId: 137,
+      signer: null,
+      provider: null,
+      walletType: 'aliterra',
+      isReadOnly: true,
+    });
+
+    store.setCurrentUser({
+      id: aliterraAddress,
+      name: `AliTerra ${aliterraAddress.slice(0, 6)}...`,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${aliterraAddress}`,
+    });
+
+    setShowAliTerraModal(false);
+    setAliterraAddress('');
+  };
+
   const handleCloseModal = () => {
     setShowWalletModal(false);
     setWalletScreen('picker');
-    setConnectionError(null);
-    setSelectedWalletType(null);
   };
 
   const handleNewChat = () => {
@@ -231,6 +283,30 @@ export default function App() {
     setNewChatAddress('');
     setShowNewChatModal(false);
     setSelectedChatId(newChat.id);
+  };
+
+  const handleDeleteChat = (chatId: string) => {
+    setLocalChats(prev => prev.filter(c => c.id !== chatId));
+    setLocalMessages(prev => {
+      const newMessages = { ...prev };
+      delete newMessages[chatId];
+      return newMessages;
+    });
+    if (selectedChatId === chatId) {
+      setSelectedChatId(null);
+    }
+    setShowChatMenu(null);
+  };
+
+  const handleSaveProfile = () => {
+    const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedAvatar}`;
+    store.setCurrentUser({
+      id: store.currentUser?.id || currentWalletAddress,
+      name: userName || 'Web3 User',
+      avatar: avatar,
+    });
+    setUserAvatar(avatar);
+    setShowEditProfileModal(false);
   };
 
   const handleCopyAddress = async () => {
@@ -311,7 +387,7 @@ export default function App() {
               <div className="px-4 py-2 flex items-center gap-2 text-xs">
                 <Shield size={14} className="text-[#3fb950]" />
                 <span className="text-[#3fb950]">E2E шифрование</span>
-                <span className="text-[#8b949e]">• Polygon</span>
+                <span className="text-[#8b949e]">• Polygon • XMTP</span>
               </div>
             )}
 
@@ -324,35 +400,69 @@ export default function App() {
                   <p className="text-[#8b949e] font-medium">Нет чатов</p>
                 </div>
               ) : filteredChats.map((chat) => (
-                <motion.button key={chat.id}
-                  onClick={() => {
-                    setSelectedChatId(chat.id);
-                    setLocalChats(prev => prev.map(c => c.id === chat.id ? { ...c, unreadCount: 0 } : c));
-                    if (window.innerWidth < 768) setShowSidebar(false);
-                  }}
-                  whileHover={{ backgroundColor: 'rgba(48, 54, 61, 0.5)' }}
-                  whileTap={{ scale: 0.98 }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${selectedChatId === chat.id ? 'bg-[#1c2128]' : ''}`}>
-                  <div className="relative flex-shrink-0">
-                    <img src={chat.contactAvatar} alt={chat.contactName} className="w-[52px] h-[52px] rounded-full" />
-                    {chat.isOnline && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#3fb950] rounded-full border-2 border-[#161b22]" />}
-                  </div>
-                  <div className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-[#f0f6fc] truncate">{chat.contactName}</span>
-                      <span className="text-xs text-[#8b949e] flex-shrink-0 ml-2">{formatTime(chat.lastMessageTime || Date.now())}</span>
+                <div key={chat.id} className="relative">
+                  <motion.button
+                    onClick={() => {
+                      setSelectedChatId(chat.id);
+                      setLocalChats(prev => prev.map(c => c.id === chat.id ? { ...c, unreadCount: 0 } : c));
+                      if (window.innerWidth < 768) setShowSidebar(false);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setShowChatMenu(showChatMenu === chat.id ? null : chat.id);
+                    }}
+                    whileHover={{ backgroundColor: 'rgba(48, 54, 61, 0.5)' }}
+                    whileTap={{ scale: 0.98 }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 transition-colors ${selectedChatId === chat.id ? 'bg-[#1c2128]' : ''}`}>
+                    <div className="relative flex-shrink-0">
+                      <img src={chat.contactAvatar} alt={chat.contactName} className="w-[52px] h-[52px] rounded-full" />
+                      {chat.isOnline && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#3fb950] rounded-full border-2 border-[#161b22]" />}
                     </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <p className="text-sm text-[#8b949e] truncate pr-2">{chat.lastMessage}</p>
-                      {chat.unreadCount > 0 && (
-                        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}
-                          className="ml-2 px-2 py-0.5 bg-[#2f8af5] text-white text-xs rounded-full flex-shrink-0 min-w-[20px] text-center">
-                          {chat.unreadCount}
-                        </motion.span>
-                      )}
+                    <div className="flex-1 min-w-0 text-left">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-[#f0f6fc] truncate">{chat.contactName}</span>
+                        <span className="text-xs text-[#8b949e] flex-shrink-0 ml-2">{formatTime(chat.lastMessageTime || Date.now())}</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-sm text-[#8b949e] truncate pr-2">{chat.lastMessage}</p>
+                        {chat.unreadCount > 0 && (
+                          <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}
+                            className="ml-2 px-2 py-0.5 bg-[#2f8af5] text-white text-xs rounded-full flex-shrink-0 min-w-[20px] text-center">
+                            {chat.unreadCount}
+                          </motion.span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </motion.button>
+                  </motion.button>
+                  
+                  {/* Chat context menu */}
+                  <AnimatePresence>
+                    {showChatMenu === chat.id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 z-10 flex gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteChat(chat.id);
+                          }}
+                          className="p-2 bg-red-500 hover:bg-red-600 rounded-lg transition-colors">
+                          <Trash2 size={16} className="text-white" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowChatMenu(null);
+                          }}
+                          className="p-2 bg-[#30363d] hover:bg-[#484f58] rounded-lg transition-colors">
+                          <X size={16} className="text-[#8b949e]" />
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               ))}
             </div>
 
@@ -405,7 +515,7 @@ export default function App() {
 
             <div className="flex items-center justify-center gap-2 py-2 px-4 text-xs text-[#8b949e] bg-[#0d1117]">
               <Lock size={12} className="text-[#3fb950]" />
-              <span>Сообщения защищены сквозным шифрованием</span>
+              <span>Сообщения защищены сквозным шифрованием (XMTP)</span>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1 bg-[#0d1117]">
@@ -415,6 +525,7 @@ export default function App() {
                     <Lock size={28} className="text-[#484f58]" />
                   </div>
                   <p className="text-[#8b949e]">Нет сообщений</p>
+                  <p className="text-[#484f58] text-sm mt-1">Начните диалог</p>
                 </div>
               ) : currentMessages.map((message, index) => {
                 const isMe = message.senderAddress === currentWalletAddress || message.senderAddress === '0xMyWallet';
@@ -541,7 +652,6 @@ export default function App() {
 
                 {walletScreen === 'picker' && (
                   <div className="space-y-3">
-                    {/* MetaMask */}
                     <button onClick={() => handleConnectWallet('metamask')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                       <MetaMaskIcon className="w-10 h-10" />
@@ -551,7 +661,6 @@ export default function App() {
                       </div>
                     </button>
 
-                    {/* Trust Wallet */}
                     <button onClick={() => handleConnectWallet('trustwallet')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                       <div className="w-10 h-10 bg-[#3375bb] rounded-xl flex items-center justify-center">
@@ -563,7 +672,6 @@ export default function App() {
                       </div>
                     </button>
 
-                    {/* AliTerra */}
                     <button onClick={() => handleConnectWallet('aliterra')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                       <div className="w-10 h-10 bg-gradient-to-br from-[#ff6b6b] to-[#feca57] rounded-xl flex items-center justify-center">
@@ -571,9 +679,8 @@ export default function App() {
                       </div>
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">AliTerra Wallet</p>
-                        <p className="text-xs text-[#8b949e]">Откроется в новой вкладке</p>
+                        <p className="text-xs text-[#8b949e]">Ручной ввод адреса</p>
                       </div>
-                      <ExternalLink size={16} className="text-[#484f58]" />
                     </button>
                   </div>
                 )}
@@ -592,7 +699,7 @@ export default function App() {
 
                 {walletScreen === 'deeplink' && (
                   <div className="py-4 text-center">
-                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся автоматически, нажмите кнопку ниже:</p>
+                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся автоматически:</p>
                     <div className="space-y-3">
                       <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
                         className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors w-full">
@@ -609,16 +716,10 @@ export default function App() {
                         <ExternalLink size={16} className="text-[#8b949e]" />
                       </a>
                     </div>
-                    <div className="mt-4 flex gap-3 justify-center">
-                      <button onClick={() => setWalletScreen('picker')}
-                        className="px-4 py-2 bg-[#2f8af5] text-white rounded-xl text-sm hover:bg-[#1a73e8] transition-colors">
-                        Назад
-                      </button>
-                      <button onClick={handleCloseModal}
-                        className="px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc] transition-colors">
-                        Закрыть
-                      </button>
-                    </div>
+                    <button onClick={handleCloseModal}
+                      className="mt-4 px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc] transition-colors">
+                      Закрыть
+                    </button>
                   </div>
                 )}
 
@@ -634,6 +735,59 @@ export default function App() {
                     <p className="text-sm text-[#8b949e] mt-2">{truncateAddress(currentWalletAddress)}</p>
                   </motion.div>
                 )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AliTerra Modal - Manual Address Input */}
+      <AnimatePresence>
+        {showAliTerraModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowAliTerraModal(false)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#161b22] rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-[#30363d]">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-semibold text-[#f0f6fc]">AliTerra Wallet</h3>
+                  <button onClick={() => setShowAliTerraModal(false)} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
+                    <X size={20} className="text-[#8b949e]" />
+                  </button>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="p-4 bg-[#21262d] rounded-xl">
+                    <p className="text-sm text-[#8b949e] mb-3">1. Откройте AliTerra Wallet:</p>
+                    <a href="https://wallet.aliterra.space" target="_blank" rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 p-3 bg-gradient-to-r from-[#ff6b6b] to-[#feca57] text-white rounded-lg font-medium hover:opacity-90 transition-opacity">
+                      <Globe size={18} />
+                      Открыть wallet.aliterra.space
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                  
+                  <div className="p-4 bg-[#21262d] rounded-xl">
+                    <p className="text-sm text-[#8b949e] mb-2">2. Скопируйте адрес кошелька и вставьте:</p>
+                    <input
+                      type="text"
+                      placeholder="0x..."
+                      value={aliterraAddress}
+                      onChange={(e) => setAliterraAddress(e.target.value)}
+                      className="w-full bg-[#0d1117] text-[#f0f6fc] placeholder-[#484f58] rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]"
+                    />
+                  </div>
+                  
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleAliTerraConnect}
+                    className="w-full py-3.5 bg-gradient-to-r from-[#ff6b6b] to-[#feca57] text-white rounded-xl font-medium hover:opacity-90 transition-opacity">
+                    Подключить
+                  </motion.button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -692,8 +846,10 @@ export default function App() {
                   </button>
                 </div>
                 <div className="text-center mb-6">
-                  <img src={store.currentUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentWalletAddress}`}
-                    alt="Avatar" className="w-20 h-20 rounded-full mx-auto mb-4 border-4 border-[#2f8af5]" />
+                  <div className="relative inline-block">
+                    <img src={store.currentUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentWalletAddress}`}
+                      alt="Avatar" className="w-24 h-24 rounded-full mx-auto mb-2 border-4 border-[#2f8af5]" />
+                  </div>
                   <h4 className="text-lg font-semibold text-[#f0f6fc]">{store.currentUser?.name || 'Web3 User'}</h4>
                   <div className="flex items-center justify-center gap-2 mt-2">
                     <code className="bg-[#21262d] px-3 py-1.5 rounded-lg text-sm text-[#8b949e]">{truncateAddress(currentWalletAddress)}</code>
@@ -713,10 +869,97 @@ export default function App() {
                     <span className="text-sm text-[#f0f6fc] font-medium capitalize">{store.wallet.walletType || 'MetaMask'}</span>
                   </div>
                 </div>
-                <div className="mt-6">
+                <div className="mt-6 space-y-3">
+                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    onClick={() => { setShowProfileModal(false); setShowEditProfileModal(true); }}
+                    className="w-full flex items-center justify-center gap-2 p-3 bg-[#21262d] hover:bg-[#282c34] text-[#f0f6fc] rounded-xl transition-colors">
+                    <Settings size={20} /><span>Редактировать профиль</span>
+                  </motion.button>
                   <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleDisconnect}
                     className="w-full flex items-center justify-center gap-2 p-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl transition-colors">
                     <LogOut size={20} /><span>Отключить кошелёк</span>
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Profile Modal */}
+      <AnimatePresence>
+        {showEditProfileModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowEditProfileModal(false)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#161b22] rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-[#30363d]">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-semibold text-[#f0f6fc]">Редактировать профиль</h3>
+                  <button onClick={() => setShowEditProfileModal(false)} className="p-1.5 hover:bg-[#21262d] rounded-full transition-colors">
+                    <X size={20} className="text-[#8b949e]" />
+                  </button>
+                </div>
+                
+                <div className="space-y-4">
+                  {/* Avatar Selection */}
+                  <div>
+                    <label className="block text-sm text-[#8b949e] mb-3">Выберите аватар</label>
+                    <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-1">
+                      {avatarOptions.map((avatar) => (
+                        <button
+                          key={avatar}
+                          onClick={() => setSelectedAvatar(avatar)}
+                          className={`p-1 rounded-lg transition-all ${selectedAvatar === avatar ? 'ring-2 ring-[#2f8af5] bg-[#21262d]' : 'hover:bg-[#21262d]'}`}>
+                          <img
+                            src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${avatar}`}
+                            alt={avatar}
+                            className="w-10 h-10 rounded-full"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Name Input */}
+                  <div>
+                    <label className="block text-sm text-[#8b949e] mb-2">Имя пользователя</label>
+                    <div className="relative">
+                      <User size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8b949e]" />
+                      <input
+                        type="text"
+                        placeholder="Введите имя"
+                        value={userName}
+                        onChange={(e) => setUserName(e.target.value)}
+                        className="w-full bg-[#21262d] text-[#f0f6fc] placeholder-[#484f58] rounded-xl pl-12 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2f8af5]"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Preview */}
+                  <div className="p-4 bg-[#21262d] rounded-xl">
+                    <p className="text-xs text-[#8b949e] mb-2">Предпросмотр:</p>
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedAvatar}`}
+                        alt="Preview"
+                        className="w-12 h-12 rounded-full"
+                      />
+                      <div>
+                        <p className="font-medium text-[#f0f6fc]">{userName || 'Web3 User'}</p>
+                        <p className="text-xs text-[#8b949e]">{truncateAddress(currentWalletAddress)}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSaveProfile}
+                    className="w-full py-3.5 bg-gradient-to-r from-[#2f8af5] to-[#6366f1] text-white rounded-xl font-medium hover:opacity-90 transition-opacity">
+                    Сохранить
                   </motion.button>
                 </div>
               </div>
