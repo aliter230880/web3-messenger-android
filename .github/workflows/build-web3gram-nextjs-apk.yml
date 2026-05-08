@@ -1,0 +1,205 @@
+name: Build Web3Gram Next.js APK
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/build-web3gram-nextjs-apk.yml'
+  workflow_dispatch:
+
+env:
+  APP_NAME: Web3Gram
+  APP_ID: com.web3gram.nextjs
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ─── Checkout ───────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ─── Node.js 20 ────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ─── Java 21 (для Android Gradle) ──────────────────────
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # ─── Android SDK ───────────────────────────────────────
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          yes | sdkmanager --licenses || true
+
+      # ─── Install dependencies ──────────────────────────────
+      - name: Install npm dependencies
+        run: npm install --legacy-peer-deps
+
+      # ─── Install Capacitor ─────────────────────────────────
+      - name: Install Capacitor packages
+        run: |
+          npm install --legacy-peer-deps \
+            @capacitor/core \
+            @capacitor/cli \
+            @capacitor/android \
+            @capacitor/splash-screen
+
+      # ─── Build Next.js ─────────────────────────────────────
+      - name: Build Next.js application
+        run: npm run build
+
+      # ─── Initialize Capacitor ──────────────────────────────
+      - name: Initialize Capacitor
+        run: |
+          npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" \
+            --web-dir=.next \
+            --npm-client=npm
+
+      # ─── Add Android platform ──────────────────────────────
+      - name: Add Android platform
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      # ─── Network Security Config ───────────────────────────
+      - name: Configure network security
+        run: |
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                  </trust-anchors>
+              </base-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="true">relay.walletconnect.com</domain>
+                  <domain includeSubdomains="true">relay.walletconnect.org</domain>
+                  <domain includeSubdomains="true">api.walletconnect.com</domain>
+                  <domain includeSubdomains="true">rpc.walletconnect.com</domain>
+                  <domain includeSubdomains="true">explorer-api.walletconnect.com</domain>
+                  <domain includeSubdomains="true">verify.walletconnect.com</domain>
+                  <domain includeSubdomains="true">pulse.walletconnect.org</domain>
+                  <domain includeSubdomains="true">polygon-rpc.com</domain>
+                  <domain includeSubdomains="true">rpc-mainnet.matic.network</domain>
+                  <domain includeSubdomains="true">chat.aliterra.space</domain>
+                  <domain includeSubdomains="true">wallet.aliterra.space</domain>
+                  <domain includeSubdomains="true">localhost</domain>
+                  <domain includeSubdomains="true">127.0.0.1</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+          echo "✓ network_security_config.xml created"
+
+      # ─── Patch AndroidManifest (deep links) ────────────────
+      - name: Patch AndroidManifest for deep links
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          # Добавляем networkSecurityConfig
+          if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
+            sed -i 's|<application|<application\n        android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
+          fi
+
+          # Добавляем queries для deep links (после </application>)
+          if ! grep -q "metamask" "$MANIFEST"; then
+            sed -i 's|</application>|        <queries>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="metamask" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="trust" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="wc" />\n            </intent>\n        </queries>\n    </application>|' "$MANIFEST"
+          fi
+
+          echo "✓ AndroidManifest patched"
+
+      # ─── Fix Kotlin duplicate classes ──────────────────────
+      - name: Fix Kotlin/Gradle compatibility
+        run: |
+          cat >> android/app/build.gradle << 'EOF'
+
+          configurations.all {
+              resolutionStrategy {
+                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22'
+              }
+          }
+          EOF
+          echo "✓ build.gradle patched"
+
+      # ─── Splash screen config ──────────────────────────────
+      - name: Configure splash screen
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cat > android/app/src/main/res/drawable/splash.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/splash_background"/>
+          </layer-list>
+          EOF
+
+          mkdir -p android/app/src/main/res/values
+          cat > android/app/src/main/res/values/colors.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="splash_background">#FF1a1d23</color>
+          </resources>
+          EOF
+          echo "✓ splash screen configured"
+
+      # ─── Build APK ─────────────────────────────────────────
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      # ─── Upload build log on failure ───────────────────────
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3gram-nextjs-build-log
+          path: /tmp/gradle-build.log
+          retention-days: 3
+
+      # ─── Upload APK artifact ───────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Web3Gram-NextJS-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 90
+
+      # ─── Summary ───────────────────────────────────────────
+      - name: Build summary
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
+            echo "## 🎉 APK Built Successfully!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| App Name | ${{ env.APP_NAME }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Package ID | ${{ env.APP_ID }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| APK Size | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
+            echo "| Build Type | Debug |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📥 Download the APK from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ APK Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check the build log artifact for details." >> $GITHUB_STEP_SUMMARY
+          fi
