@@ -184,7 +184,7 @@ export default function App() {
     }, 2000);
   };
 
-  const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'walletconnect') => {
+  const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
     setWalletScreen('connecting');
     setConnectionError(null);
     setSelectedWalletType(walletType);
@@ -564,7 +564,7 @@ export default function App() {
                     </button>
 
                     {/* AliTerra */}
-                    <button onClick={() => window.open('https://wallet.aliterra.space', '_blank')}
+                    <button onClick={() => handleConnectWallet('aliterra')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
                       <div className="w-10 h-10 bg-gradient-to-br from-[#ff6b6b] to-[#feca57] rounded-xl flex items-center justify-center">
                         <Globe size={24} className="text-white" />
