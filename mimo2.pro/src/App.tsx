@@ -28,12 +28,15 @@ import {
   ExternalLink,
   Trash2,
   Settings,
-  User
+  User,
+  DollarSign,
+  AlertCircle
 } from 'lucide-react';
 import { useStore, Chat, Message } from './store';
 import { useWallet } from './hooks/useWallet';
 import { identityService } from './services/identityService';
 import { messengerService } from './services/messengerService';
+import { transferService } from './services/transferService';
 
 // Локальные аватарки
 const avatarOptions = [
@@ -95,6 +98,15 @@ export default function App() {
   const [isConnectingWallet, setIsConnectingWallet] = useState(false);
   const [gasEstimate, setGasEstimate] = useState<string | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  
+  // Transfer modal state
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferRecipient, setTransferRecipient] = useState('');
+  const [isSendingTransfer, setIsSendingTransfer] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [transferSuccess, setTransferSuccess] = useState<string | null>(null);
+  const [maticBalance, setMaticBalance] = useState<string>('0');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const xmtpInitRef = useRef(false);
@@ -440,6 +452,110 @@ export default function App() {
     setShowProfileModal(false);
     xmtpInitRef.current = false;
     setXmtpStatus('disconnected');
+  };
+
+  // Загрузка баланса MATIC
+  useEffect(() => {
+    const loadBalance = async () => {
+      if (store.wallet.isConnected && store.wallet.provider) {
+        try {
+          const balance = await transferService.getBalance(
+            store.wallet.provider,
+            store.wallet.address!
+          );
+          setMaticBalance(parseFloat(balance).toFixed(4));
+        } catch (error) {
+          console.error('Error loading balance:', error);
+        }
+      }
+    };
+    
+    loadBalance();
+    // Обновляем баланс каждые 30 секунд
+    const interval = setInterval(loadBalance, 30000);
+    return () => clearInterval(interval);
+  }, [store.wallet.isConnected, store.wallet.address]);
+
+  // Открыть модалку перевода
+  const handleOpenTransfer = (recipient?: string) => {
+    setTransferRecipient(recipient || selectedChat?.contactAddress || '');
+    setTransferAmount('');
+    setTransferError(null);
+    setTransferSuccess(null);
+    setShowTransferModal(true);
+  };
+
+  // Отправить перевод
+  const handleSendTransfer = async () => {
+    if (!store.wallet.signer || !store.wallet.provider) {
+      setTransferError('Кошелёк не подключён');
+      return;
+    }
+
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      setTransferError('Введите сумму');
+      return;
+    }
+
+    if (!transferService.isValidAddress(transferRecipient)) {
+      setTransferError('Неверный адрес');
+      return;
+    }
+
+    if (parseFloat(transferAmount) > parseFloat(maticBalance)) {
+      setTransferError('Недостаточно MATIC');
+      return;
+    }
+
+    setIsSendingTransfer(true);
+    setTransferError(null);
+
+    try {
+      // Отправляем перевод
+      const result = await transferService.sendMatic(
+        store.wallet.signer,
+        transferRecipient,
+        transferAmount
+      );
+
+      setTransferSuccess(`Перевод отправлен! TX: ${result.txHash.slice(0, 10)}...`);
+
+      // Отправляем сообщение в чат о переводе
+      if (selectedChatId) {
+        const transferMessage: Message = {
+          id: `transfer_${Date.now()}`,
+          chatId: selectedChatId,
+          senderAddress: currentWalletAddress,
+          receiverAddress: transferRecipient,
+          content: `💸 Переведено ${transferAmount} MATIC\n🔗 TX: ${transferService.getExplorerLink(result.txHash)}`,
+          timestamp: Date.now(),
+          isSent: true,
+          isDelivered: true,
+        };
+
+        store.addMessage(selectedChatId, transferMessage);
+      }
+
+      // Ждём подтверждения в фоне
+      store.wallet.provider.waitForTransaction(result.txHash).then(() => {
+        console.log('Transfer confirmed:', result.txHash);
+        // Обновляем баланс
+        transferService.getBalance(store.wallet.provider!, store.wallet.address!)
+          .then(balance => setMaticBalance(parseFloat(balance).toFixed(4)));
+      });
+
+      // Закрываем модалку через 2 секунды
+      setTimeout(() => {
+        setShowTransferModal(false);
+        setTransferSuccess(null);
+      }, 2000);
+
+    } catch (error: any) {
+      console.error('Transfer error:', error);
+      setTransferError(error.message || 'Ошибка перевода');
+    } finally {
+      setIsSendingTransfer(false);
+    }
   };
 
   // Фильтрация чатов
