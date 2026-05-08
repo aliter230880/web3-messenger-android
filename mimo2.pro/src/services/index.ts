@@ -1,8 +1,7 @@
-// Export all services
-export { walletService } from './walletService';
-export { encryptionService } from './encryptionService';
+// Services
 export { xmtpService } from './xmtpService';
+export { identityService } from './identityService';
+export { transferService } from './transferService';
 
-export type { WalletConnection } from './walletService';
-export type { EncryptedMessage } from './encryptionService';
-export type { XmtpMessage, XmtpConversation } from './xmtpService';
+export type { XmtpMessage } from './xmtpService';
+export type { Identity } from './identityService';
