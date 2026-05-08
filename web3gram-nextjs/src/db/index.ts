@@ -1,24 +1,31 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;
 
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required");
+// Web3Gram messenger doesn't require PostgreSQL
+// Database is optional for future features
+let pool: Pool | null = null;
+let db: ReturnType<typeof drizzle> | null = null;
+
+if (databaseUrl) {
+  const globalForDb = globalThis as typeof globalThis & {
+    __arenaNextJsPostgresqlPool?: Pool;
+  };
+
+  pool =
+    globalForDb.__arenaNextJsPostgresqlPool ??
+    new Pool({
+      connectionString: databaseUrl,
+    });
+
+  if (process.env.NODE_ENV !== "production") {
+    globalForDb.__arenaNextJsPostgresqlPool = pool;
+  }
+
+  db = drizzle(pool, { schema });
 }
 
-const globalForDb = globalThis as typeof globalThis & {
-  __arenaNextJsPostgresqlPool?: Pool;
-};
-
-export const pool =
-  globalForDb.__arenaNextJsPostgresqlPool ??
-  new Pool({
-    connectionString: databaseUrl,
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.__arenaNextJsPostgresqlPool = pool;
-}
-
-export const db = drizzle(pool);
+// Export with null safety
+export { pool, db };
