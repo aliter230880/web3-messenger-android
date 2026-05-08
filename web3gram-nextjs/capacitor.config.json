@@ -1,0 +1,20 @@
+{
+  "appId": "com.web3gram.app",
+  "appName": "Web3Gram",
+  "webDir": ".next",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#1a1d23",
+      "androidSplashResourceName": "splash"
+    }
+  }
+}
