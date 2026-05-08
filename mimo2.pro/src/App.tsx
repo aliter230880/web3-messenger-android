@@ -49,7 +49,7 @@ const initialChats: Chat[] = [
     id: 'chat_1',
     contactAddress: '0x1234567890abcdef1234567890abcdef12345678',
     contactName: 'Alice Web3',
-    contactAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alice',
+    contactAvatar: '/ava/ava (1).png',
     messages: [],
     unreadCount: 3,
     lastMessage: 'Привет! Как дела с проектом? 🚀',
@@ -60,7 +60,7 @@ const initialChats: Chat[] = [
     id: 'chat_2',
     contactAddress: '0xabcdef1234567890abcdef1234567890abcdef12',
     contactName: 'Bob DeFi',
-    contactAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Bob',
+    contactAvatar: '/ava/ava (2).png',
     messages: [],
     unreadCount: 0,
     lastMessage: 'Готово, проверь кошелёк',
@@ -86,41 +86,38 @@ const formatTime = (timestamp: number) => {
 
 const truncateAddress = (addr: string) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
 
-// MetaMask SVG Icon
+// Иконки кошельков - локальные PNG
 const MetaMaskIcon = ({ className = "w-10 h-10" }) => (
-  <svg className={className} viewBox="0 0 318.6 318.6">
-    <polygon fill="#E2761B" stroke="#E2761B" points="274.1,35.5 174.6,109.4 193,65.8"/>
-    <g>
-      <polygon fill="#E4761B" stroke="#E4761B" points="44.4,35.5 137.7,110.6 120.2,65.8"/>
-      <polygon fill="#E4761B" stroke="#E4761B" points="238.7,124.6 260.3,154.6 290.7,158.3 274.1,135.3"/>
-      <polygon fill="#E4761B" stroke="#E4761B" points="27.3,124.6 43.9,135.3 27.9,158.3 57.8,154.6"/>
-      <polygon fill="#E4761B" stroke="#E4761B" points="103.6,189.6 88.5,223.5 127.3,225.7 124.6,187.7"/>
-      <polygon fill="#E4761B" stroke="#E4761B" points="214.9,189.6 193.1,187.7 190.4,225.7 229.2,223.5"/>
-      <polygon fill="#D7C1B3" stroke="#D7C1B3" points="127.3,225.7 140.7,257.2 170.1,257.2 172.9,223.5"/>
-      <polygon fill="#D7C1B3" stroke="#D7C1B3" points="127.3,225.7 88.5,223.5 95.2,257.2 140.7,257.2"/>
-      <polygon fill="#D7C1B3" stroke="#D7C1B3" points="229.2,223.5 190.4,225.7 172.9,257.2 218.4,257.2"/>
-      <polygon fill="#D7C1B3" stroke="#D7C1B3" points="229.2,223.5 218.4,257.2 257.2,257.2 263.9,223.5"/>
-      <polygon fill="#233447" stroke="#233447" points="260.3,154.6 274.1,135.3 290.7,158.3"/>
-      <polygon fill="#233447" stroke="#233447" points="27.3,158.3 43.9,135.3 57.8,154.6"/>
-      <polygon fill="#CD6116" stroke="#CD6116" points="103.6,189.6 124.6,187.7 127.3,225.7 140.7,257.2 127.3,257.2 88.5,223.5"/>
-      <polygon fill="#CD6116" stroke="#CD6116" points="214.9,189.6 193.1,187.7 229.2,223.5 257.2,257.2 218.4,257.2 190.4,225.7"/>
-      <polygon fill="#E4751F" stroke="#E4751F" points="88.5,223.5 95.2,257.2 127.3,257.2 127.3,225.7 140.7,257.2 170.1,257.2 172.9,223.5 190.4,225.7 229.2,223.5 263.9,223.5 257.2,257.2 218.4,257.2 172.9,257.2 140.7,257.2 95.2,257.2"/>
-      <polygon fill="#F6851B" stroke="#F6851B" points="174.6,109.4 193,65.8 214.9,189.6 124.6,187.7"/>
-      <polygon fill="#F6851B" stroke="#F6851B" points="137.7,110.6 120.2,65.8 124.6,187.7 214.9,189.6"/>
-      <polygon fill="#763D16" stroke="#763D16" points="274.1,35.5 238.7,124.6 214.9,189.6 174.6,109.4 193,65.8"/>
-      <polygon fill="#763D16" stroke="#763D16" points="44.4,35.5 120.2,65.8 124.6,187.7 103.6,189.6 57.8,154.6"/>
-      <polygon fill="#F6851B" stroke="#F6851B" points="290.7,158.3 274.1,135.3 274.1,35.5 238.7,124.6 260.3,154.6"/>
-      <polygon fill="#F6851B" stroke="#F6851B" points="27.9,158.3 43.9,135.3 44.4,35.5 57.8,154.6 103.6,189.6 120.2,65.8 137.7,110.6"/>
-    </g>
-  </svg>
+  <img src="/ava/metamask.png" alt="MetaMask" className={className} />
 );
 
-// Avatar options for profile
+const TrustWalletIcon = ({ className = "w-10 h-10" }) => (
+  <img src="/ava/trust.png" alt="Trust Wallet" className={className} />
+);
+
+const AliTerraIcon = ({ className = "w-10 h-10" }) => (
+  <img src="/ava/aliterra.png" alt="AliTerra" className={className} />
+);
+
+// Локальные аватарки из папки ava
 const avatarOptions = [
-  'Ava', 'Bella', 'Charlie', 'Dusty', 'Eden', 'Felix', 'Ginger', 'Harley',
-  'Ivy', 'Jasper', 'Leo', 'Milo', 'Nala', 'Oscar', 'Patches', 'Rusty',
-  'Sasha', 'Tiger', 'Uma', 'Violet', 'Willow', 'Xena', 'Yuki', 'Zoe'
+  'ava (1)', 'ava (2)', 'ava (3)', 'ava (4)', 'ava (5)', 'ava (6)', 'ava (7)', 'ava (8)',
+  'ava (9)', 'ava (10)', 'ava (11)', 'ava (12)', 'ava (13)', 'ava (14)', 'ava (15)', 'ava (16)',
+  'ava (17)', 'ava (18)', 'ava (19)', 'ava (20)', 'ava (21)', 'ava (22)'
 ];
+
+// Функция получения URL аватарки
+const getAvatarUrl = (seed: string) => {
+  // Используем локальные аватарки на основе seed
+  const index = Math.abs(seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % avatarOptions.length;
+  return `/ava/${avatarOptions[index]}.png`;
+};
+
+// Случайная аватарка по умолчанию
+const getDefaultAvatar = () => {
+  const index = Math.floor(Math.random() * avatarOptions.length);
+  return `/ava/${avatarOptions[index]}.png`;
+};
 
 export default function App() {
   const store = useStore();
@@ -206,7 +203,7 @@ export default function App() {
                     id: `chat_${Date.now()}`,
                     contactAddress: msg.senderAddress,
                     contactName: msg.senderAddress.slice(0, 8) + '...',
-                    contactAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.senderAddress}`,
+                    contactAvatar: getAvatarUrl(msg.senderAddress),
                     messages: [],
                     unreadCount: 1,
                     lastMessage: msg.content,
@@ -382,7 +379,7 @@ export default function App() {
     store.setCurrentUser({
       id: aliterraAddress,
       name: `AliTerra ${aliterraAddress.slice(0, 6)}...`,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${aliterraAddress}`,
+      avatar: getAvatarUrl(aliterraAddress),
     });
 
     setShowAliTerraModal(false);
@@ -400,7 +397,7 @@ export default function App() {
       id: `chat_${Date.now()}`,
       contactAddress: newChatAddress,
       contactName: truncateAddress(newChatAddress),
-      contactAvatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${newChatAddress}`,
+      contactAvatar: getAvatarUrl(newChatAddress),
       messages: [],
       unreadCount: 0,
       lastMessage: 'Новый чат',
@@ -427,7 +424,7 @@ export default function App() {
   };
 
   const handleSaveProfile = () => {
-    const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedAvatar}`;
+    const avatar = `/ava/${selectedAvatar}.png`;
     store.setCurrentUser({
       id: store.currentUser?.id || currentWalletAddress,
       name: userName || 'Web3 User',
@@ -493,7 +490,7 @@ export default function App() {
                   className="p-2.5 hover:bg-[#21262d] rounded-full transition-colors relative">
                   {store.wallet.isConnected ? (
                     <>
-                      <img src={store.currentUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentWalletAddress}`}
+                      <img src={store.currentUser?.avatar || getAvatarUrl(currentWalletAddress)}
                         alt="Profile" className="w-6 h-6 rounded-full" />
                       <div className="absolute bottom-1 right-1 w-2.5 h-2.5 bg-[#3fb950] rounded-full border-2 border-[#161b22]" />
                     </>
@@ -793,9 +790,7 @@ export default function App() {
 
                     <button onClick={() => handleConnectWallet('trustwallet')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
-                      <div className="w-10 h-10 bg-[#3375bb] rounded-xl flex items-center justify-center">
-                        <Wallet size={24} className="text-white" />
-                      </div>
+                      <TrustWalletIcon className="w-10 h-10 rounded-xl" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">Trust Wallet</p>
                         <p className="text-xs text-[#8b949e]">Мобильный кошелёк</p>
@@ -804,9 +799,7 @@ export default function App() {
 
                     <button onClick={() => handleConnectWallet('aliterra')}
                       className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors group">
-                      <div className="w-10 h-10 bg-gradient-to-br from-[#ff6b6b] to-[#feca57] rounded-xl flex items-center justify-center">
-                        <Globe size={24} className="text-white" />
-                      </div>
+                      <AliTerraIcon className="w-10 h-10 rounded-xl" />
                       <div className="text-left flex-1">
                         <p className="font-medium text-[#f0f6fc] group-hover:text-white">AliTerra Wallet</p>
                         <p className="text-xs text-[#8b949e]">Ручной ввод адреса</p>
@@ -977,7 +970,7 @@ export default function App() {
                 </div>
                 <div className="text-center mb-6">
                   <div className="relative inline-block">
-                    <img src={store.currentUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentWalletAddress}`}
+                    <img src={store.currentUser?.avatar || getAvatarUrl(currentWalletAddress)}
                       alt="Avatar" className="w-24 h-24 rounded-full mx-auto mb-2 border-4 border-[#2f8af5]" />
                   </div>
                   <h4 className="text-lg font-semibold text-[#f0f6fc]">{store.currentUser?.name || 'Web3 User'}</h4>
@@ -1044,7 +1037,7 @@ export default function App() {
                           onClick={() => setSelectedAvatar(avatar)}
                           className={`p-1 rounded-lg transition-all ${selectedAvatar === avatar ? 'ring-2 ring-[#2f8af5] bg-[#21262d]' : 'hover:bg-[#21262d]'}`}>
                           <img
-                            src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${avatar}`}
+                            src={`/ava/${avatar}.png`}
                             alt={avatar}
                             className="w-10 h-10 rounded-full"
                           />
@@ -1073,7 +1066,7 @@ export default function App() {
                     <p className="text-xs text-[#8b949e] mb-2">Предпросмотр:</p>
                     <div className="flex items-center gap-3">
                       <img
-                        src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedAvatar}`}
+                        src={`/ava/${selectedAvatar}.png`}
                         alt="Preview"
                         className="w-12 h-12 rounded-full"
                       />
