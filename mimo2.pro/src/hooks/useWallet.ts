@@ -7,6 +7,7 @@ export function useWallet() {
   const { setWallet, setCurrentUser, disconnectWallet } = useStore();
 
   const connect = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
+    console.log('useWallet.connect called:', walletType);
     setIsConnecting(true);
     setError(null);
 
@@ -20,15 +21,18 @@ export function useWallet() {
 
       // Проверяем есть ли кошелёк
       const ethereum = (window as any).ethereum;
+      console.log('window.ethereum:', !!ethereum);
       
       if (!ethereum) {
         throw new Error('Кошелёк не найден. Откройте сайт через MetaMask или Trust Wallet Browser.');
       }
 
       // Запрашиваем подключение
+      console.log('Requesting accounts...');
       const accounts = await ethereum.request({ 
         method: 'eth_requestAccounts' 
       });
+      console.log('Got accounts:', accounts);
 
       if (!accounts || accounts.length === 0) {
         throw new Error('Нет аккаунтов');
