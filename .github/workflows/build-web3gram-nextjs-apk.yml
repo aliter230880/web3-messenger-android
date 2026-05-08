@@ -58,28 +58,9 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: npm run build
 
-      - name: Verify index.html exists
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "=== Checking .next directory ==="
-          ls -la .next/ | head -20
-          echo ""
-          echo "=== Looking for index.html ==="
-          find .next -name "index.html" | head -5
-          echo ""
-          if [ -f ".next/index.html" ]; then
-            echo "✅ .next/index.html found!"
-          else
-            echo "❌ .next/index.html NOT found!"
-            echo "Creating fallback..."
-            cp -r .next/server/app/* .next/ 2>/dev/null || true
-            find .next -name "index.html" -exec cp {} .next/ \; 2>/dev/null || true
-          fi
-
       - name: Initialize Capacitor
         working-directory: ${{ env.WORKING_DIR }}
         run: |
-          # Remove old config if exists
           rm -rf capacitor.config.json android
           npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=.next
 
@@ -93,7 +74,7 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           mkdir -p android/app/src/main/res/xml
-          cat > android/app/src/main/res/xml/network_security_config.xml << 'EOF'
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'NETEOF'
           <?xml version="1.0" encoding="utf-8"?>
           <network-security-config>
               <base-config cleartextTrafficPermitted="true">
@@ -103,26 +84,31 @@ jobs:
               </base-config>
               <domain-config cleartextTrafficPermitted="true">
                   <domain includeSubdomains="true">relay.walletconnect.com</domain>
-                  <domain includeSubdomains="true">relay.walletconnect.org</domain>
-                  <domain includeSubdomains="true">api.walletconnect.com</domain>
-                  <domain includeSubdomains="true">rpc.walletconnect.com</domain>
                   <domain includeSubdomains="true">polygon-rpc.com</domain>
                   <domain includeSubdomains="true">chat.aliterra.space</domain>
-                  <domain includeSubdomains="true">wallet.aliterra.space</domain>
               </domain-config>
           </network-security-config>
-          EOF
+          NETEOF
 
+      # ─── Patch AndroidManifest ─────────────────────────────
+      # <queries> должен быть ПРЯМЫМ потомком <manifest>, НЕ внутри <application>
       - name: Patch AndroidManifest for deep links
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          # Добавляем networkSecurityConfig в <application>
           if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
             sed -i 's|<application|<application\n        android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
           fi
-          if ! grep -q "metamask" "$MANIFEST"; then
-            sed -i 's|</application>|        <queries>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="metamask" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="trust" />\n            </intent>\n            <intent>\n                <action android:name="android.intent.action.VIEW" />\n                <data android:scheme="wc" />\n            </intent>\n        </queries>\n    </application>|' "$MANIFEST"
+
+          # Добавляем <queries> ПОСЛЕ </application>, перед </manifest>
+          if ! grep -q "queries" "$MANIFEST"; then
+            sed -i 's|</application>|    </application>\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="metamask" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="trust" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="wc" />\n        </intent>\n    </queries>|' "$MANIFEST"
           fi
+
+          echo "=== Final AndroidManifest.xml ==="
+          cat "$MANIFEST"
 
       - name: Fix Kotlin/Gradle compatibility
         working-directory: ${{ env.WORKING_DIR }}
