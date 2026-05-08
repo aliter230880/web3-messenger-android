@@ -42,7 +42,7 @@ const formatTime = (timestamp: number) => {
 
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, wcUri, error: walletError } = useWallet();
+  const { connect, disconnect, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(store.activeChat);
   const [messageInput, setMessageInput] = useState('');
@@ -763,28 +763,6 @@ export default function App() {
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
                     <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
                       className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
-                  </div>
-                )}
-
-                {walletScreen === 'deeplink' && (
-                  <div className="py-4 text-center">
-                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся:</p>
-                    <div className="space-y-3">
-                      <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
-                        className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl w-full">
-                        <MetaMaskIcon className="w-8 h-8 rounded-lg" />
-                        <span className="text-[#f0f6fc] font-medium">Открыть в MetaMask</span>
-                        <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
-                      <a href={`trust://wc?uri=${encodeURIComponent(wcUri || '')}`}
-                        className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl w-full">
-                        <TrustWalletIcon className="w-8 h-8 rounded-lg" />
-                        <span className="text-[#f0f6fc] font-medium">Открыть в Trust Wallet</span>
-                        <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
-                    </div>
-                    <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
-                      className="mt-4 px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc]">Закрыть</button>
                   </div>
                 )}
 
