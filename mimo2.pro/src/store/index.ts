@@ -93,6 +93,10 @@ export interface AppState {
   // Theme
   theme: 'dark' | 'light';
   setTheme: (theme: 'dark' | 'light') => void;
+  
+  // Auto-connect
+  savedWalletAddress?: string | null;
+  savedWalletType?: string | null;
 }
 
 const initialWalletState: WalletState = {
@@ -199,6 +203,9 @@ export const useStore = create<AppState>()(
         chats: state.chats,
         theme: state.theme,
         currentUser: state.currentUser,
+        // Сохраняем адрес для авто-подключения
+        savedWalletAddress: state.wallet.address,
+        savedWalletType: state.wallet.walletType,
       }),
     }
   )
