@@ -42,7 +42,13 @@ const formatTime = (timestamp: number) => {
 
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, wcUri, error: walletError } = useWallet();
+  const {
+    connect, disconnect, wcUri, cancelConnect,
+    checkAndFinishSession, connectAliTerra, openAliTerraWallet,
+    error: walletError,
+    xmtpStatus, retryXmtp,
+    isMobile, isCapacitor,
+  } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(store.activeChat);
   const [messageInput, setMessageInput] = useState('');
@@ -62,10 +68,9 @@ export default function App() {
   const [userName, setUserName] = useState(store.currentUser?.name || '');
   const [selectedAvatar, setSelectedAvatar] = useState('ava (1)');
   const [isConnectingWallet, setIsConnectingWallet] = useState(false);
+  const [connectingWalletType, setConnectingWalletType] = useState<'metamask' | 'trustwallet' | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [xmtpStatus, setXmtpStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
-  
-  // Transfer state
+    // Transfer state
   const [transferAmount, setTransferAmount] = useState('');
   const [transferRecipient, setTransferRecipient] = useState('');
   const [isSendingTransfer, setIsSendingTransfer] = useState(false);
@@ -167,60 +172,29 @@ export default function App() {
     setTimeout(autoConnect, 500);
   }, []);
 
-  // Инициализация XMTP (опционально, не блокирует UI)
+  // Подписка на XMTP stream — запускаем когда xmtpStatus === 'connected' (инит — в useWallet)
   useEffect(() => {
-    const initXmtp = async () => {
-      if (!store.wallet.isConnected || !store.wallet.signer) {
-        setXmtpStatus('disconnected');
-        return;
+    if (xmtpStatus !== 'connected') return;
+    let cancel: (() => void) | undefined;
+    xmtpService.streamAllMessages((msg) => {
+      const existingChat = store.chats.find(c =>
+        c.contactAddress.toLowerCase() === msg.senderAddress.toLowerCase()
+      );
+      if (existingChat) {
+        store.addMessage(existingChat.id, {
+          id: msg.id,
+          chatId: existingChat.id,
+          senderAddress: msg.senderAddress,
+          receiverAddress: msg.recipientAddress,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          isSent: false,
+          isRead: false,
+        });
       }
-
-      if (xmtpService.isReady()) {
-        setXmtpStatus('connected');
-        return;
-      }
-
-      setXmtpStatus('connecting');
-
-      try {
-        const success = await xmtpService.initialize(store.wallet.signer);
-        
-        if (success) {
-          setXmtpStatus('connected');
-          console.log('XMTP: Connected!');
-          
-          // Подписка на входящие (в фоне)
-          xmtpService.streamAllMessages((msg) => {
-            const existingChat = store.chats.find(c => 
-              c.contactAddress.toLowerCase() === msg.senderAddress.toLowerCase()
-            );
-            
-            if (existingChat) {
-              store.addMessage(existingChat.id, {
-                id: msg.id,
-                chatId: existingChat.id,
-                senderAddress: msg.senderAddress,
-                receiverAddress: msg.recipientAddress,
-                content: msg.content,
-                timestamp: msg.timestamp,
-                isSent: false,
-                isRead: false,
-              });
-            }
-          }).catch(() => {});
-          
-        } else {
-          setXmtpStatus('disconnected'); // Не ошибка, просто не доступен
-        }
-      } catch {
-        setXmtpStatus('disconnected'); // Не ошибка
-      }
-    };
-
-    // Запускаем через 2 секунды чтобы не блокировать UI
-    const timeout = setTimeout(initXmtp, 2000);
-    return () => clearTimeout(timeout);
-  }, [store.wallet.isConnected]);
+    }).then(fn => { cancel = fn; }).catch(() => {});
+    return () => { cancel?.(); };
+  }, [xmtpStatus]);
 
   // Отправка сообщения
   const handleSendMessage = useCallback(async () => {
@@ -246,16 +220,15 @@ export default function App() {
     store.addMessage(selectedChatId, newMessage);
     setMessageInput('');
 
-    // Попытка отправить через XMTP (в фоне)
+    // Отправить через XMTP (реальная E2E доставка)
     if (xmtpService.isReady()) {
-      try {
-        await xmtpService.sendMessage(recipientAddress, content);
-        console.log('XMTP: Message sent!');
-      } catch (error) {
-        console.log('XMTP: Send failed, saved locally');
-      }
+      xmtpService.sendMessage(recipientAddress, content).catch((err) => {
+        console.warn('[XMTP] send failed:', err?.message);
+      });
+    } else if (xmtpStatus === 'error') {
+      console.warn('[XMTP] недоступен — сообщение сохранено локально');
     }
-  }, [messageInput, selectedChatId, selectedChat, currentWalletAddress, store]);
+  }, [messageInput, selectedChatId, selectedChat, currentWalletAddress, store, xmtpStatus]);
 
   // Подключение кошелька
   const handleConnectWallet = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
@@ -271,15 +244,18 @@ export default function App() {
       return;
     }
     
+    setConnectingWalletType(walletType === 'trustwallet' ? 'trustwallet' : 'metamask');
     try {
       await connect(walletType);
       setWalletScreen('success');
-      setTimeout(() => { setShowWalletModal(false); setWalletScreen('picker'); }, 1500);
+      setTimeout(() => { setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }, 1500);
     } catch (err: any) {
-      if (err.message.includes('Подтвердите') || err.message.includes('Timeout')) {
+      const msg = err?.message || '';
+      if (msg.includes('Подтвердите') || msg.includes('Timeout') || msg.includes('wcUri') || msg.includes('display_uri')) {
         setWalletScreen('deeplink');
       } else {
         setWalletScreen('picker');
+        setConnectingWalletType(null);
       }
     } finally {
       setIsConnectingWallet(false);
@@ -368,7 +344,34 @@ export default function App() {
   // Отключение
   const handleDisconnect = () => {
     disconnect();
+    setConnectingWalletType(null);
     setShowProfileModal(false);
+  };
+
+  // "Я подтвердил — завершить": ручная проверка WC сессии после deep link
+  const handleIConfirmed = async () => {
+    if (!connectingWalletType) return;
+    setWalletScreen('connecting');
+    const wcWallet = connectingWalletType === 'trustwallet' ? 'trust' : 'metamask';
+    const ok = await checkAndFinishSession(wcWallet);
+    if (ok) {
+      setWalletScreen('success');
+      setTimeout(() => { setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }, 1500);
+    } else {
+      setWalletScreen('deeplink');
+    }
+  };
+
+  // Открыть deep link в кошелёк (через walletService — _system на Capacitor)
+  const handleOpenDeepLink = (wallet: 'metamask' | 'trust') => {
+    if (!wcUri) return;
+    import('../services/walletService').then(({ walletService: ws }) => {
+      ws.openDeepLink(wcUri, wallet);
+    }).catch(() => {
+      const encoded = encodeURIComponent(wcUri);
+      const url = wallet === 'metamask' ? `metamask://wc?uri=${encoded}` : `trust://wc?uri=${encoded}`;
+      window.open(url, isCapacitor ? '_system' : '_blank', 'noreferrer');
+    });
   };
 
   // Открыть перевод
@@ -476,24 +479,32 @@ export default function App() {
 
             {store.wallet.isConnected && (
               <div className="px-4 py-2 flex items-center gap-2 text-xs">
-                <Shield size={14} className={
-                  xmtpStatus === 'connected' ? 'text-[#3fb950]' : 
-                  xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 
-                  xmtpStatus === 'error' ? 'text-[#ef4444]' : 
-                  'text-[#8b949e]'
-                } />
+                {xmtpStatus === 'connecting' ? (
+                  <Loader2 size={14} className="text-[#f59e0b] animate-spin" />
+                ) : (
+                  <Shield size={14} className={
+                    xmtpStatus === 'connected' ? 'text-[#3fb950]' :
+                    xmtpStatus === 'error' ? 'text-[#ef4444]' :
+                    'text-[#8b949e]'
+                  } />
+                )}
                 <span className={
-                  xmtpStatus === 'connected' ? 'text-[#3fb950]' : 
-                  xmtpStatus === 'connecting' ? 'text-[#f59e0b]' : 
-                  xmtpStatus === 'error' ? 'text-[#ef4444]' : 
+                  xmtpStatus === 'connected' ? 'text-[#3fb950]' :
+                  xmtpStatus === 'connecting' ? 'text-[#f59e0b]' :
+                  xmtpStatus === 'error' ? 'text-[#ef4444]' :
                   'text-[#8b949e]'
                 }>
-                  {xmtpStatus === 'connected' ? 'E2E активно' : 
-                   xmtpStatus === 'connecting' ? 'XMTP подключение...' : 
-                   xmtpStatus === 'error' ? 'XMTP ошибка' : 
+                  {xmtpStatus === 'connected' ? 'E2E активно' :
+                   xmtpStatus === 'connecting' ? 'XMTP...' :
+                   xmtpStatus === 'error' ? 'XMTP недоступен' :
                    'Подключён'}
                 </span>
-                <span className="text-[#8b949e]">• {maticBalance} MATIC</span>
+                {xmtpStatus === 'error' && (
+                  <button onClick={retryXmtp} className="text-[#2f8af5] hover:text-[#60a5fa] underline">
+                    Повторить
+                  </button>
+                )}
+                <span className="text-[#8b949e] ml-auto">• {maticBalance} MATIC</span>
               </div>
             )}
 
@@ -702,16 +713,16 @@ export default function App() {
         {showWalletModal && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}>
+            onClick={() => { cancelConnect(); setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }}>
             <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
               onClick={(e) => e.stopPropagation()}
               className="bg-[#161b22] rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-[#30363d]">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-semibold text-[#f0f6fc]">
-                    {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'deeplink' ? 'Откройте кошелёк' : 'Подключить кошелёк'}
+                    {walletScreen === 'success' ? 'Подключено!' : walletScreen === 'deeplink' ? 'Подтвердите в кошельке' : 'Подключить кошелёк'}
                   </h3>
-                  <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }} className="p-1.5 hover:bg-[#21262d] rounded-full">
+                  <button onClick={() => { cancelConnect(); setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }} className="p-1.5 hover:bg-[#21262d] rounded-full">
                     <X size={20} className="text-[#8b949e]" />
                   </button>
                 </div>
@@ -761,30 +772,50 @@ export default function App() {
                     </motion.div>
                     <p className="text-[#f0f6fc] text-lg font-medium mb-2">Подключение...</p>
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
-                    <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
+                    <button onClick={() => { cancelConnect(); setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }}
                       className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
                   </div>
                 )}
 
                 {walletScreen === 'deeplink' && (
-                  <div className="py-4 text-center">
-                    <p className="text-[#8b949e] text-sm mb-4">Если кошелёк не открылся:</p>
-                    <div className="space-y-3">
-                      <a href={`metamask://wc?uri=${encodeURIComponent(wcUri || '')}`}
+                  <div className="py-4 text-center space-y-3">
+                    <p className="text-[#f0f6fc] text-sm font-medium">Подтвердите подключение в кошельке</p>
+                    <p className="text-[#8b949e] text-xs">После подтверждения нажмите кнопку ниже</p>
+                    
+                    {/* Кнопки открытия кошелька */}
+                    <div className="space-y-2">
+                      <button onClick={() => handleOpenDeepLink('metamask')}
                         className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl w-full">
                         <MetaMaskIcon className="w-8 h-8 rounded-lg" />
-                        <span className="text-[#f0f6fc] font-medium">Открыть в MetaMask</span>
+                        <span className="text-[#f0f6fc] font-medium">Открыть MetaMask</span>
                         <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
-                      <a href={`trust://wc?uri=${encodeURIComponent(wcUri || '')}`}
+                      </button>
+                      <button onClick={() => handleOpenDeepLink('trust')}
                         className="flex items-center justify-center gap-3 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl w-full">
                         <TrustWalletIcon className="w-8 h-8 rounded-lg" />
-                        <span className="text-[#f0f6fc] font-medium">Открыть в Trust Wallet</span>
+                        <span className="text-[#f0f6fc] font-medium">Открыть Trust Wallet</span>
                         <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
+                      </button>
                     </div>
-                    <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
-                      className="mt-4 px-4 py-2 text-[#8b949e] hover:text-[#f0f6fc]">Закрыть</button>
+
+                    {/* "Я подтвердил" — ручной bypass если connect() не резолвится */}
+                    <motion.button
+                      whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                      onClick={handleIConfirmed}
+                      className="w-full py-3.5 bg-gradient-to-r from-[#3fb950] to-[#2ea043] text-white rounded-xl font-semibold shadow-lg shadow-green-500/20">
+                      ✓ Я подтвердил — завершить
+                    </motion.button>
+
+                    <div className="flex gap-2">
+                      <button onClick={() => setWalletScreen('connecting')}
+                        className="flex-1 px-3 py-2 text-[#8b949e] hover:text-[#f0f6fc] text-sm border border-[#30363d] rounded-lg">
+                        Показать QR
+                      </button>
+                      <button onClick={() => { cancelConnect(); setShowWalletModal(false); setWalletScreen('picker'); setConnectingWalletType(null); }}
+                        className="flex-1 px-3 py-2 text-[#8b949e] hover:text-[#f0f6fc] text-sm border border-[#30363d] rounded-lg">
+                        Отмена
+                      </button>
+                    </div>
                   </div>
                 )}
 
