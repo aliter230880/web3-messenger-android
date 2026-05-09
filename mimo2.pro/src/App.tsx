@@ -837,13 +837,26 @@ export default function App() {
                   <div className="py-4 text-center">
                     <p className="text-[#8b949e] text-sm mb-4">Откройте кошелёк для подтверждения:</p>
                     <div className="space-y-3">
-                      <a 
-                        href={`metamask://wc?uri=${encodeURIComponent(wcUri)}`}
-                        onClick={(e) => {
+                      <button 
+                        onClick={() => {
                           console.log('Opening MetaMask...');
+                          const encodedUri = encodeURIComponent(wcUri || '');
+                          
+                          // Пробуем разные форматы deep link
+                          const urls = [
+                            `metamask://wc?uri=${encodedUri}`,
+                            `metamask://dapp/${window.location.host}`,
+                            `https://metamask.app.link/dapp/${window.location.host}`,
+                          ];
+                          
+                          // Открываем первый вариант
+                          const url = urls[0];
+                          console.log('MetaMask URL:', url);
+                          
                           if (typeof (window as any).Capacitor !== 'undefined') {
-                            e.preventDefault();
-                            window.open(`metamask://wc?uri=${encodeURIComponent(wcUri)}`, '_system');
+                            window.open(url, '_system');
+                          } else {
+                            window.open(url, '_blank');
                           }
                         }}
                         style={{ 
@@ -854,13 +867,41 @@ export default function App() {
                           padding: '16px',
                           backgroundColor: '#21262d',
                           borderRadius: '12px',
-                          textDecoration: 'none'
+                          border: 'none',
+                          cursor: 'pointer',
+                          width: '100%'
                         }}
                       >
                         <MetaMaskIcon className="w-8 h-8 rounded-lg" />
                         <span style={{ color: '#f0f6fc', fontWeight: 500 }}>Открыть в MetaMask</span>
                         <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
+                      </button>
+                      
+                      {/* Резервная кнопка - просто открыть MetaMask */}
+                      <button 
+                        onClick={() => {
+                          console.log('Opening MetaMask app...');
+                          if (typeof (window as any).Capacitor !== 'undefined') {
+                            window.open('metamask://', '_system');
+                          } else {
+                            window.open('https://metamask.io', '_blank');
+                          }
+                        }}
+                        style={{ 
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '12px',
+                          padding: '12px',
+                          backgroundColor: '#161b22',
+                          borderRadius: '12px',
+                          border: '1px solid #30363d',
+                          cursor: 'pointer',
+                          width: '100%'
+                        }}
+                      >
+                        <span style={{ color: '#8b949e', fontSize: '14px' }}>Просто открыть MetaMask</span>
+                      </button>
                       <a 
                         href={`trust://wc?uri=${encodeURIComponent(wcUri)}`}
                         onClick={(e) => {
