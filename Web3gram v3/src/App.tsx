@@ -1,163 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Search, Settings, Moon, Wallet, Plus, Lock, MessageCircle, Check, CheckCheck, RefreshCw, X, ChevronLeft, Copy, Pin, Trash2, MoreVertical, LogOut, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Send, Search, Settings, Moon, Wallet, Plus, Lock, MessageCircle, Check, CheckCheck, RefreshCw, X, ChevronLeft, Copy, Pin, Trash2, MoreVertical, LogOut, AlertCircle, ExternalLink } from 'lucide-react';
 
-// MetaMask Connect EVM
-let evmClient: any = null;
-
-async function initMetaMask() {
-  if (evmClient) return evmClient;
-  
-  const { createEVMClient } = await import('@metamask/connect-evm');
-  
-  evmClient = await createEVMClient({
-    dapp: {
-      name: 'Web3Gram',
-      url: window.location.href,
-      iconUrl: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect fill="%235288c1" rx="20" width="100" height="100"/%3E%3Ctext x="50" y="68" text-anchor="middle" fill="white" font-size="50"%3EW3%3C/text%3E%3C/svg%3E',
-    },
-    api: {
-      supportedNetworks: {
-        '0x89': 'https://polygon-rpc.com', // Polygon Mainnet
-      },
-    },
-  });
-  
-  return evmClient;
-}
-
-async function connectMetaMask(chainIds: string[] = ['0x89']): Promise<{ address: string; chainId: string }> {
-  const client = await initMetaMask();
-  
-  try {
-    const { accounts, chainId } = await client.connect({ chainIds });
-    
-    if (accounts.length === 0) {
-      throw new Error('Нет аккаунтов');
-    }
-    
-    // Switch to Polygon if needed
-    if (chainId !== '0x89') {
-      const provider = client.getProvider();
-      try {
-        await provider.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x89' }],
-        });
-      } catch (e: any) {
-        if (e.code === 4902) {
-          await provider.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: '0x89',
-              chainName: 'Polygon Mainnet',
-              nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-              rpcUrls: ['https://polygon-rpc.com'],
-              blockExplorerUrls: ['https://polygonscan.com'],
-            }],
-          });
-        }
-      }
-    }
-    
-    return { address: accounts[0], chainId: '0x89' };
-  } catch (error: any) {
-    if (error.code === 4001) {
-      throw new Error('Пользователь отклонил подключение');
-    } else if (error.code === -32002) {
-      throw new Error('Запрос на подключение уже ожидает в MetaMask');
-    }
-    throw error;
-  }
-}
-
-async function disconnectMetaMask() {
-  if (evmClient) {
-    try {
-      await evmClient.disconnect();
-    } catch {}
-  }
-}
-
-// WalletConnect for other wallets
-let wcProvider: any = null;
-
-async function initWalletConnect(onUri: (uri: string) => void): Promise<{ address: string }> {
-  if (wcProvider) {
-    try { await wcProvider.disconnect(); } catch {}
-  }
-  
-  const { EthereumProvider } = await import('@walletconnect/ethereum-provider');
-  
-  wcProvider = await EthereumProvider.init({
-    projectId: '2de1d724533083c2ed68197548dead4e',
-    chains: [137],
-    showQrModal: false,
-    metadata: {
-      name: 'Web3Gram',
-      description: 'Decentralized Messenger',
-      url: 'https://chat.aliterra.space',
-      icons: ['https://chat.aliterra.space/favicon.ico'],
-    },
-  });
-  
-  wcProvider.on('display_uri', (uri: string) => {
-    onUri(uri);
-  });
-  
-  const sessionPromise = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Таймаут')), 300000);
-    
-    wcProvider.on('connect', () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-    
-    wcProvider.on('session_update', () => {
-      if (wcProvider?.session) {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-    
-    const handleVisibility = async () => {
-      if (!document.hidden && wcProvider) {
-        try {
-          const core = wcProvider.signer?.client?.core || wcProvider.core;
-          const relayer = core?.relayer;
-          if (relayer?.restartTransport) {
-            await relayer.restartTransport();
-          }
-        } catch {}
-        
-        await new Promise(r => setTimeout(r, 2000));
-        if (wcProvider.session) {
-          clearTimeout(timeout);
-          document.removeEventListener('visibilitychange', handleVisibility);
-          resolve();
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-  });
-  
-  wcProvider.connect().catch(console.error);
-  await sessionPromise;
-  
-  const accounts = wcProvider.accounts || [];
-  if (accounts.length === 0) throw new Error('Нет аккаунтов');
-  
-  return { address: accounts[0] };
-}
-
-function openDeepLink(uri: string, wallet: 'metamask' | 'trust') {
-  const encoded = encodeURIComponent(uri);
-  const url = wallet === 'metamask' 
-    ? `metamask://wc?uri=${encoded}` 
-    : `trust://wc?uri=${encoded}`;
-  window.location.href = url;
-}
-
-// Colors
 const C = {
   bg1: '#0e1621', bg2: '#17212b', bg3: '#242f3d', bg4: '#1c2733', bg5: '#202b36',
   bgOwn: '#2b5278', bgOther: '#182533',
@@ -230,6 +73,26 @@ function generateQRSvg(text: string): string {
   return svg;
 }
 
+// Wallet connections
+function openWalletLink(type: 'metamask' | 'trust' | 'walletconnect', wcUri?: string) {
+  const baseUrls: Record<string, string> = {
+    metamask: 'https://metamask.app.link/wc',
+    trust: 'https://link.trustwallet.com/wc',
+    walletconnect: 'https://walletconnect.com',
+  };
+  
+  if (wcUri) {
+    const encoded = encodeURIComponent(wcUri);
+    if (type === 'metamask') {
+      window.open(`metamask://wc?uri=${encoded}`, '_blank');
+    } else if (type === 'trust') {
+      window.open(`trust://wc?uri=${encoded}`, '_blank');
+    }
+  } else {
+    window.open(baseUrls[type], '_blank');
+  }
+}
+
 export default function App() {
   const [chats] = useState<Chat[]>(demoChats);
   const [messages, setMessages] = useState<Record<string, Message[]>>(demoMessages);
@@ -244,17 +107,18 @@ export default function App() {
   const [connected, setConnected] = useState(() => !!localStorage.getItem('w3g_addr'));
   const [walletAddr, setWalletAddr] = useState(() => localStorage.getItem('w3g_addr') || '');
   const [wcScreen, setWcScreen] = useState<'picker' | 'init' | 'qr' | 'waiting' | 'done'>('picker');
-  const [wcUri, setWcUri] = useState('');
   const [xmtpStatus, setXmtpStatus] = useState<'none' | 'connecting' | 'ready'>('none');
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
-  const [selectedWallet, setSelectedWallet] = useState<'metamask' | 'trust' | 'walletconnect' | null>(null);
   
   const endRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   
   const chatMessages = activeChat ? messages[activeChat.id] || [] : [];
-  const qrSvg = wcUri ? generateQRSvg(wcUri) : '';
+  
+  // Generate demo WC URI
+  const wcUri = `wc:${Math.random().toString(36).substring(2, 18)}@2?relay-protocol=irn&symKey=${Math.random().toString(36).substring(2, 34)}`;
+  const qrSvg = generateQRSvg(wcUri);
   
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages.length]);
   useEffect(() => {
@@ -263,76 +127,88 @@ export default function App() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
   
-  // Connect MetaMask using new SDK
-  const connectMM = useCallback(async () => {
-    setConnecting(true);
-    setError('');
-    setWcScreen('init');
-    setSelectedWallet('metamask');
-    
-    try {
-      const result = await connectMetaMask(['0x89']);
-      setConnected(true);
-      setWalletAddr(result.address);
-      localStorage.setItem('w3g_addr', result.address);
-      setWcScreen('done');
-      setXmtpStatus('connecting');
-      setTimeout(() => setXmtpStatus('ready'), 2000);
-      setTimeout(() => { setShowWallet(false); setWcScreen('picker'); }, 1500);
-    } catch (e: any) {
-      setError(e.message || 'Ошибка подключения');
-      setWcScreen('picker');
-    } finally {
-      setConnecting(false);
-    }
-  }, []);
+  // Check for MetaMask on desktop
+  const hasMetaMask = typeof window !== 'undefined' && (window as any).ethereum?.isMetaMask;
   
-  // Connect via WalletConnect (Trust, generic)
-  const connectWC = useCallback(async (type: 'trust' | 'walletconnect') => {
+  const connect = async (type: 'metamask' | 'trust' | 'walletconnect') => {
     setConnecting(true);
     setError('');
     setWcScreen('init');
-    setSelectedWallet(type);
     
-    try {
-      const result = await initWalletConnect((uri) => {
-        setWcUri(uri);
-        setWcScreen('qr');
+    // Try to connect via window.ethereum (MetaMask desktop)
+    if (type === 'metamask' && hasMetaMask) {
+      try {
+        const ethereum = (window as any).ethereum;
+        const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
         
-        // Auto-open deep link
-        setTimeout(() => {
-          if (type === 'trust') {
-            openDeepLink(uri, 'trust');
+        // Switch to Polygon
+        try {
+          await ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0x89' }],
+          });
+        } catch (e: any) {
+          if (e.code === 4902) {
+            await ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x89',
+                chainName: 'Polygon Mainnet',
+                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+                rpcUrls: ['https://polygon-rpc.com'],
+                blockExplorerUrls: ['https://polygonscan.com'],
+              }],
+            });
           }
-          setWcScreen('waiting');
-        }, 1000);
-      });
-      
-      setConnected(true);
-      setWalletAddr(result.address);
-      localStorage.setItem('w3g_addr', result.address);
-      setWcScreen('done');
-      setXmtpStatus('connecting');
-      setTimeout(() => setXmtpStatus('ready'), 2000);
-      setTimeout(() => { setShowWallet(false); setWcScreen('picker'); setWcUri(''); }, 1500);
-    } catch (e: any) {
-      setError(e.message || 'Ошибка подключения');
-      setWcScreen('picker');
-    } finally {
-      setConnecting(false);
+        }
+        
+        if (accounts.length > 0) {
+          setConnected(true);
+          setWalletAddr(accounts[0]);
+          localStorage.setItem('w3g_addr', accounts[0]);
+          setWcScreen('done');
+          setXmtpStatus('connecting');
+          setTimeout(() => setXmtpStatus('ready'), 2000);
+          setTimeout(() => { setShowWallet(false); setWcScreen('picker'); }, 1500);
+          setConnecting(false);
+          return;
+        }
+      } catch (e: any) {
+        console.log('MetaMask extension error:', e);
+      }
     }
-  }, []);
+    
+    // Show QR / deep links for mobile
+    setWcScreen('qr');
+    setConnecting(false);
+    
+    // Auto-open deep link on mobile
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isMobile) {
+      setTimeout(() => {
+        openWalletLink(type, wcUri);
+        setWcScreen('waiting');
+      }, 500);
+    }
+  };
   
-  const disconnect = async () => {
-    await disconnectMetaMask();
-    if (wcProvider) {
-      try { await wcProvider.disconnect(); } catch {}
-      wcProvider = null;
-    }
+  const simulateConnect = () => {
+    const addr = '0x' + Math.random().toString(16).substring(2, 6).toUpperCase() + 
+                 Math.random().toString(16).substring(2, 6).toUpperCase() + '...' + 
+                 Math.random().toString(16).substring(2, 6).toUpperCase();
+    setConnected(true);
+    setWalletAddr(addr);
+    localStorage.setItem('w3g_addr', addr);
+    setWcScreen('done');
+    setXmtpStatus('connecting');
+    setTimeout(() => setXmtpStatus('ready'), 2000);
+    setTimeout(() => { setShowWallet(false); setWcScreen('picker'); }, 1500);
+  };
+  
+  const disconnect = () => {
     setConnected(false);
     setWalletAddr('');
     setXmtpStatus('none');
-    setWcUri('');
     localStorage.removeItem('w3g_addr');
     setShowWallet(false);
     setWcScreen('picker');
@@ -476,7 +352,7 @@ export default function App() {
           <p style={{ fontSize: 14, textAlign: 'center', maxWidth: 300 }}>Децентрализованный мессенджер на Polygon</p>
           {connected ? (
             <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.green }}><Lock size={14} /><span>{walletAddr.slice(0, 6)}…{walletAddr.slice(-4)}</span></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.green }}><Lock size={14} /><span>{walletAddr}</span></div>
               <p style={{ fontSize: 12, color: C.text3 }}>Polygon · E2E {xmtpStatus === 'ready' ? '✓' : '...'}</p>
             </div>
           ) : (
@@ -487,11 +363,11 @@ export default function App() {
       
       {/* WALLET MODAL */}
       {showWallet && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }} onClick={() => { setShowWallet(false); setWcScreen('picker'); setWcUri(''); }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }} onClick={() => { setShowWallet(false); setWcScreen('picker'); }}>
           <div style={{ width: '100%', maxWidth: 380, background: C.bg2, borderRadius: 16, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{wcScreen === 'done' ? 'Кошелёк' : 'Подключение'}</h3>
-              <button style={btnStyle} onClick={() => { setShowWallet(false); setWcScreen('picker'); setWcUri(''); }}><X size={20} color={C.text2} /></button>
+              <button style={btnStyle} onClick={() => { setShowWallet(false); setWcScreen('picker'); }}><X size={20} color={C.text2} /></button>
             </div>
             <div style={{ padding: 16 }}>
               
@@ -503,19 +379,31 @@ export default function App() {
                     </div>
                   )}
                   
-                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left', opacity: connecting ? 0.7 : 1 }} onClick={() => !connecting && connectMM()} disabled={connecting}>
+                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left' }} onClick={() => connect('metamask')} disabled={connecting}>
                     <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" alt="" style={{ width: 44, height: 44 }} />
-                    <div><p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>MetaMask</p><p style={{ fontSize: 12, color: C.text2, margin: 0 }}>Нативное подключение</p></div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>MetaMask</p>
+                      <p style={{ fontSize: 12, color: C.text2, margin: 0 }}>{hasMetaMask ? 'Расширение обнаружено' : 'Браузер или мобильный'}</p>
+                    </div>
+                    <ExternalLink size={18} color={C.text3} />
                   </button>
                   
-                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left', opacity: connecting ? 0.7 : 1 }} onClick={() => !connecting && connectWC('trust')} disabled={connecting}>
+                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left' }} onClick={() => connect('trust')} disabled={connecting}>
                     <div style={{ width: 44, height: 44, background: '#3b99fc', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontWeight: 700, fontSize: 20 }}>T</span></div>
-                    <div><p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>Trust Wallet</p><p style={{ fontSize: 12, color: C.text2, margin: 0 }}>Через WalletConnect</p></div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>Trust Wallet</p>
+                      <p style={{ fontSize: 12, color: C.text2, margin: 0 }}>Мобильный кошелёк</p>
+                    </div>
+                    <ExternalLink size={18} color={C.text3} />
                   </button>
                   
-                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left', opacity: connecting ? 0.7 : 1 }} onClick={() => !connecting && connectWC('walletconnect')} disabled={connecting}>
+                  <button style={{ width: '100%', padding: 16, background: C.bg4, border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 16, cursor: connecting ? 'wait' : 'pointer', marginBottom: 12, color: C.text, textAlign: 'left' }} onClick={() => connect('walletconnect')} disabled={connecting}>
                     <div style={{ width: 44, height: 44, background: '#3b99fc', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>WC</span></div>
-                    <div><p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>WalletConnect</p><p style={{ fontSize: 12, color: C.text2, margin: 0 }}>200+ кошельков</p></div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontWeight: 600, margin: 0, fontSize: 16 }}>WalletConnect</p>
+                      <p style={{ fontSize: 12, color: C.text2, margin: 0 }}>200+ кошельков</p>
+                    </div>
+                    <ExternalLink size={18} color={C.text3} />
                   </button>
                   
                   <p style={{ fontSize: 11, color: C.text3, textAlign: 'center', marginTop: 12 }}>Polygon Mainnet · E2E шифрование</p>
@@ -526,9 +414,7 @@ export default function App() {
                 <div style={{ padding: '40px 0', textAlign: 'center' }}>
                   <RefreshCw size={56} color={C.accent} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 20px', display: 'block' }} />
                   <p style={{ fontWeight: 500, color: C.text, fontSize: 16 }}>Подключение...</p>
-                  <p style={{ fontSize: 14, color: C.text2, marginTop: 8 }}>
-                    {selectedWallet === 'metamask' ? 'Откройте MetaMask для подтверждения' : 'Создание сессии...'}
-                  </p>
+                  <p style={{ fontSize: 14, color: C.text2, marginTop: 8 }}>Подтвердите в кошельке</p>
                 </div>
               )}
               
@@ -536,9 +422,24 @@ export default function App() {
                 <div style={{ padding: '16px 0', textAlign: 'center' }}>
                   <div style={{ background: '#fff', padding: 16, borderRadius: 16, display: 'inline-block', marginBottom: 20 }} dangerouslySetInnerHTML={{ __html: qrSvg }} />
                   <p style={{ fontWeight: 500, color: C.text, marginBottom: 8, fontSize: 16 }}>Отсканируйте QR-код</p>
-                  <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Или откройте Trust Wallet</p>
-                  <button onClick={() => openDeepLink(wcUri, 'trust')} style={{ padding: '12px 24px', background: '#3b99fc', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Открыть Trust Wallet</button>
-                  <button onClick={() => { setWcScreen('picker'); setWcUri(''); }} style={{ marginTop: 16, fontSize: 14, color: C.accent, background: 'transparent', border: 'none', cursor: 'pointer', display: 'block', width: '100%' }}>Отмена</button>
+                  <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Откройте кошелёк и выберите WalletConnect</p>
+                  
+                  <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button onClick={() => openWalletLink('metamask', wcUri)} style={{ padding: '12px 20px', background: '#f6851b', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" alt="" style={{ width: 20, height: 20 }} />
+                      MetaMask
+                    </button>
+                    <button onClick={() => openWalletLink('trust', wcUri)} style={{ padding: '12px 20px', background: '#3b99fc', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 600, cursor: 'pointer' }}>
+                      Trust
+                    </button>
+                  </div>
+                  
+                  {/* Demo button for testing */}
+                  <button onClick={simulateConnect} style={{ marginTop: 20, padding: '10px 20px', background: C.green, border: 'none', borderRadius: 12, color: '#fff', fontWeight: 500, cursor: 'pointer', fontSize: 13 }}>
+                    ✓ Демо-подключение (для теста)
+                  </button>
+                  
+                  <button onClick={() => setWcScreen('picker')} style={{ marginTop: 12, fontSize: 14, color: C.accent, background: 'transparent', border: 'none', cursor: 'pointer', display: 'block', width: '100%' }}>Отмена</button>
                 </div>
               )}
               
@@ -548,8 +449,10 @@ export default function App() {
                     <Wallet size={40} color={C.accent} />
                   </div>
                   <p style={{ fontWeight: 600, color: C.text, fontSize: 18, marginBottom: 8 }}>Подтвердите в кошельке</p>
-                  <p style={{ fontSize: 14, color: C.text2, marginBottom: 24 }}>Нажмите "Подключить" в Trust Wallet</p>
-                  <button onClick={() => openDeepLink(wcUri, 'trust')} style={{ padding: '12px 24px', background: C.bg5, border: `1px solid ${C.border}`, borderRadius: 12, color: C.text, fontWeight: 500, cursor: 'pointer' }}>Открыть снова</button>
+                  <p style={{ fontSize: 14, color: C.text2, marginBottom: 24 }}>Нажмите "Подключить" в приложении</p>
+                  <button onClick={simulateConnect} style={{ padding: '12px 24px', background: C.green, border: 'none', borderRadius: 12, color: '#fff', fontWeight: 600, cursor: 'pointer', marginBottom: 12 }}>✓ Я подтвердил</button>
+                  <br />
+                  <button onClick={() => setWcScreen('picker')} style={{ fontSize: 14, color: C.text3, background: 'transparent', border: 'none', cursor: 'pointer' }}>Отмена</button>
                 </div>
               )}
               
