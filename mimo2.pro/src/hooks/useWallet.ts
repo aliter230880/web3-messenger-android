@@ -12,15 +12,6 @@ export function useWallet() {
   
   const { setWallet, setCurrentUser, disconnectWallet } = useStore();
 
-  // Открыть URL (нативно в Capacitor)
-  const openUrl = (url: string) => {
-    if (typeof (window as any).Capacitor !== 'undefined') {
-      window.open(url, '_system');
-    } else {
-      window.open(url, '_blank');
-    }
-  };
-
   const connect = async (walletType: 'metamask' | 'trustwallet' | 'aliterra') => {
     console.log('=== CONNECT START ===', walletType);
     setIsConnecting(true);
@@ -30,70 +21,38 @@ export function useWallet() {
     try {
       // AliTerra
       if (walletType === 'aliterra') {
-        openUrl('https://wallet.aliterra.space/?from=web3gram');
+        window.open('https://wallet.aliterra.space/', '_blank');
         setIsConnecting(false);
         return;
       }
 
+      // Desktop с расширением - прямое подключение
       const ethereum = (window as any).ethereum;
-      console.log('window.ethereum exists:', !!ethereum);
-
-      // Есть window.ethereum (desktop расширение или mobile browser кошелька)
-      if (ethereum) {
-        console.log('Using window.ethereum directly');
+      if (ethereum && !isMobile()) {
+        console.log('Desktop: using window.ethereum');
         
         const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
-        
-        if (!accounts || accounts.length === 0) {
-          throw new Error('Нет аккаунтов');
-        }
-
         const address = accounts[0];
         
-        // Переключаем на Polygon
         try {
-          await ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x89' }],
-          });
+          await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] });
         } catch (e: any) {
           if (e.code === 4902) {
             await ethereum.request({
               method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: '0x89',
-                chainName: 'Polygon',
-                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-                rpcUrls: ['https://polygon-rpc.com'],
-              }],
+              params: [{ chainId: '0x89', chainName: 'Polygon', nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 }, rpcUrls: ['https://polygon-rpc.com'] }],
             });
           }
         }
 
         const provider = new ethers.providers.Web3Provider(ethereum, 'any');
-        const signer = provider.getSigner();
-
-        setWallet({
-          isConnected: true,
-          address: address,
-          chainId: 137,
-          signer: signer,
-          provider: provider,
-          walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet',
-          isReadOnly: false,
-        });
-
-        setCurrentUser({
-          id: address,
-          name: `${address.slice(0, 6)}...${address.slice(-4)}`,
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
-        });
-
+        setWallet({ isConnected: true, address, chainId: 137, signer: provider.getSigner(), provider, walletType: ethereum.isMetaMask ? 'metamask' : 'trustwallet', isReadOnly: false });
+        setCurrentUser({ id: address, name: `${address.slice(0, 6)}...${address.slice(-4)}`, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}` });
         return;
       }
 
-      // НЕТ window.ethereum - используем WalletConnect
-      console.log('No window.ethereum - using WalletConnect');
+      // Mobile - WalletConnect для открытия приложения кошелька
+      console.log('Mobile: using WalletConnect');
       
       const { SignClient } = await import('@walletconnect/sign-client');
       
@@ -110,13 +69,7 @@ export function useWallet() {
       const { uri, approval } = await signClientRef.current.connect({
         requiredNamespaces: {
           eip155: {
-            methods: [
-              'eth_sendTransaction',
-              'eth_signTransaction', 
-              'eth_sign',
-              'personal_sign',
-              'eth_signTypedData',
-            ],
+            methods: ['eth_sendTransaction', 'eth_signTransaction', 'eth_sign', 'personal_sign', 'eth_signTypedData'],
             chains: ['eip155:137'],
             events: ['chainChanged', 'accountsChanged'],
           },
@@ -127,25 +80,23 @@ export function useWallet() {
         throw new Error('Не удалось создать WalletConnect URI');
       }
 
-      console.log('WC URI created:', uri.substring(0, 50) + '...');
+      console.log('WC URI created');
       setWcUri(uri);
 
-      // Открываем deep link в кошелёк
+      // ОТКРЫВАЕМ ПРИЛОЖЕНИЕ КОШЕЛЬКА через deep link
       if (walletType === 'metamask') {
-        console.log('Opening MetaMask deep link');
-        openUrl(`metamask://wc?uri=${encodeURIComponent(uri)}`);
+        console.log('Opening MetaMask app...');
+        openDeepLink(`metamask://wc?uri=${encodeURIComponent(uri)}`);
       } else if (walletType === 'trustwallet') {
-        console.log('Opening Trust Wallet deep link');
-        openUrl(`trust://wc?uri=${encodeURIComponent(uri)}`);
+        console.log('Opening Trust Wallet app...');
+        openDeepLink(`trust://wc?uri=${encodeURIComponent(uri)}`);
       }
 
-      // Ждём подтверждение
-      console.log('Waiting for session approval...');
+      // Ждём подтверждение от пользователя (3 минуты)
+      console.log('Waiting for approval...');
       const session = await Promise.race([
         approval(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout - попробуйте снова')), 120000)
-        ),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 180000)),
       ]);
 
       if (!session) {
@@ -157,7 +108,7 @@ export function useWallet() {
       // Получаем адрес
       const accounts = (session as any).namespaces.eip155?.accounts;
       if (!accounts || accounts.length === 0) {
-        throw new Error('Нет аккаунтов в сессии');
+        throw new Error('Нет аккаунтов');
       }
 
       const address = accounts[0].split(':').pop();
@@ -165,39 +116,36 @@ export function useWallet() {
       // Создаём провайдер
       const wcProvider = {
         request: async (req: { method: string; params?: any[] }) => {
-          return signClientRef.current.request({
-            topic: (session as any).topic,
-            chainId: 'eip155:137',
-            request: req,
-          });
+          return signClientRef.current.request({ topic: (session as any).topic, chainId: 'eip155:137', request: req });
         },
       };
 
       const provider = new ethers.providers.Web3Provider(wcProvider as any, 'any');
 
-      setWallet({
-        isConnected: true,
-        address: address!,
-        chainId: 137,
-        signer: provider.getSigner(),
-        provider: provider,
-        walletType: walletType,
-        isReadOnly: false,
-      });
-
-      setCurrentUser({
-        id: address!,
-        name: `${address!.slice(0, 6)}...${address!.slice(-4)}`,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}`,
-      });
+      setWallet({ isConnected: true, address: address!, chainId: 137, signer: provider.getSigner(), provider, walletType, isReadOnly: false });
+      setCurrentUser({ id: address!, name: `${address!.slice(0, 6)}...${address!.slice(-4)}`, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${address}` });
 
     } catch (err: any) {
-      console.error('=== CONNECT ERROR ===', err);
-      setError(err.message || 'Ошибка подключения');
+      console.error('Connect error:', err);
+      setError(err.message);
       throw err;
     } finally {
       setIsConnecting(false);
     }
+  };
+
+  // Открыть deep link (нативно в Capacitor, или в браузере)
+  const openDeepLink = (url: string) => {
+    if (typeof (window as any).Capacitor !== 'undefined') {
+      window.open(url, '_system'); // Открывает приложение кошелька
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  // Проверка платформы
+  const isMobile = () => {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   };
 
   const disconnect = () => {
@@ -207,5 +155,5 @@ export function useWallet() {
     setWcUri(null);
   };
 
-  return { connect, disconnect, isConnecting, error, wcUri, setWcUri };
+  return { connect, disconnect, isConnecting, error, wcUri };
 }
