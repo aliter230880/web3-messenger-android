@@ -1,4 +1,5 @@
 name: Build Web3Gram APK v3
+
 on:
   push:
     branches: [main, master]
@@ -6,13 +7,110 @@ on:
 
 jobs:
   build:
+    runs-on: ubuntu-latest
+
     steps:
-      - Checkout
-      - Node.js 20
-      - npm ci + build
-      - Java 17 + Android SDK
-      - Capacitor init + sync
-      - Network security config
-      - Deep links (metamask://, trust://, wc://)
-      - ./gradlew assembleDebug
-      - Upload artifact: web3gram-v3-debug
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/browser @capacitor/app
+
+      - name: Init Capacitor
+        run: npx cap init Web3Gram andr.web3gram --web-dir dist
+
+      - name: Add Android platform
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Create network security config
+        run: |
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="true">relay.walletconnect.com</domain>
+                  <domain includeSubdomains="true">rpc.walletconnect.com</domain>
+                  <domain includeSubdomains="true">polygon-rpc.com</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+
+      - name: Update AndroidManifest for deep links
+        run: |
+          python3 << 'PYEOF'
+          import os
+          
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          with open(manifest_path, 'r') as f:
+              content = f.read()
+          
+          if 'networkSecurityConfig' not in content:
+              content = content.replace(
+                  '<application',
+                  '<application\n        android:networkSecurityConfig="@xml/network_security_config"'
+              )
+          
+          queries = """
+          <queries>
+              <intent>
+                  <action android:name="android.intent.action.VIEW" />
+                  <data android:scheme="metamask" />
+              </intent>
+              <intent>
+                  <action android:name="android.intent.action.VIEW" />
+                  <data android:scheme="trust" />
+              </intent>
+              <intent>
+                  <action android:name="android.intent.action.VIEW" />
+                  <data android:scheme="wc" />
+              </intent>
+          </queries>
+          """
+          
+          if '<queries>' not in content:
+              content = content.replace('</manifest>', queries + '\n</manifest>')
+          
+          with open(manifest_path, 'w') as f:
+              f.write(content)
+          
+          print("AndroidManifest.xml updated")
+          PYEOF
+
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3gram-v3-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
