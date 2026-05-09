@@ -1,0 +1,150 @@
+name: Build Web3Gram Next.js APK
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'web3gram-nextjs/**'
+      - '.github/workflows/build-web3gram-nextjs-apk.yml'
+  workflow_dispatch:
+
+env:
+  APP_NAME: Web3Gram
+  APP_ID: com.web3gram.nextjs
+  WORKING_DIR: web3gram-nextjs
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          yes | sdkmanager --licenses || true
+
+      - name: Install npm dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm install --legacy-peer-deps
+
+      - name: Install Capacitor packages
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          npm install --legacy-peer-deps \
+            @capacitor/core \
+            @capacitor/cli \
+            @capacitor/android \
+            @capacitor/splash-screen
+
+      - name: Build Next.js (static export)
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm run build
+
+      # ─── Готовим папку dist для Capacitor ───────────────────
+      - name: Prepare web assets for Capacitor
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          mkdir -p dist
+          cp .next/server/app/index.html dist/index.html
+          cp -r .next/static dist/static
+          echo "=== dist/ contents ==="
+          ls -la dist/
+
+      - name: Initialize Capacitor
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          rm -rf capacitor.config.json android
+          npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=dist
+
+      - name: Add Android platform
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Configure network security
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'XMLEOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">relay.walletconnect.com</domain>
+        <domain includeSubdomains="true">polygon-rpc.com</domain>
+        <domain includeSubdomains="true">chat.aliterra.space</domain>
+    </domain-config>
+</network-security-config>
+XMLEOF
+
+      - name: Patch AndroidManifest for deep links
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
+            sed -i 's|<application|<application\n        android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
+          fi
+
+          if ! grep -q "queries" "$MANIFEST"; then
+            sed -i 's|</application>|    </application>\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="metamask" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="trust" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="wc" />\n        </intent>\n    </queries>|' "$MANIFEST"
+          fi
+
+      - name: Fix Kotlin/Gradle compatibility
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cat >> android/app/build.gradle << 'GRADLEOF'
+
+          configurations.all {
+              resolutionStrategy {
+                  force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+                  force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22'
+              }
+          }
+GRADLEOF
+
+      - name: Build debug APK
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web3gram-nextjs-build-log
+          path: /tmp/gradle-build.log
+          retention-days: 3
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Web3Gram-NextJS-debug
+          path: ${{ env.WORKING_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 90
