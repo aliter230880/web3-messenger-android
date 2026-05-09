@@ -1,0 +1,29 @@
+{
+  "appId": "andr.web3gram",
+  "appName": "Web3Gram",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*.walletconnect.com",
+      "*.walletconnect.org",
+      "polygon-rpc.com",
+      "*.infura.io",
+      "*.alchemy.com"
+    ]
+  },
+  "plugins": {
+    "Browser": {
+      "androidCustomTabsCallback": "com.aliter.web3gram.MainActivity"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "backgroundColor": "#0e1621"
+    }
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0e1621">
+    <meta name="description" content="Web3Gram - Децентрализованный мессенджер на Polygon с E2E шифрованием">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Web3Gram">
+    
+    <!-- Android Chrome -->
+    <meta name="theme-color" content="#0e1621" media="(prefers-color-scheme: dark)">
+    <meta name="color-scheme" content="dark">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="Web3Gram">
+    <meta property="og:description" content="Децентрализованный мессенджер на Polygon">
+    <meta property="og:type" content="website">
+    
+    <title>Web3Gram</title>
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%235288c1' rx='20' width='100' height='100'/%3E%3Ctext x='50' y='68' text-anchor='middle' fill='white' font-size='50' font-family='sans-serif'%3EW3%3C/text%3E%3C/svg%3E">
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body, #root { 
+            height: 100%; 
+            width: 100%;
+            overflow: hidden; 
+            background: #0e1621;
+        }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3e546a; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5288c1; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
