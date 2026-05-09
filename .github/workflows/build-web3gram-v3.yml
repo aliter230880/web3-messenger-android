@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./Web3gram v3
 
     steps:
       - name: Checkout
@@ -63,8 +67,6 @@ jobs:
       - name: Update AndroidManifest for deep links
         run: |
           python3 << 'PYEOF'
-          import os
-          
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
           with open(manifest_path, 'r') as f:
               content = f.read()
@@ -111,5 +113,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: web3gram-v3-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: Web3gram v3/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
