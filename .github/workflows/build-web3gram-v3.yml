@@ -39,8 +39,8 @@ jobs:
 
       - name: Install Capacitor
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npm install @capacitor/browser @capacitor/app
+          npm install @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5
+          npm install @capacitor/app@5
 
       - name: Init Capacitor
         run: npx cap init Web3Gram andr.web3gram --web-dir dist
