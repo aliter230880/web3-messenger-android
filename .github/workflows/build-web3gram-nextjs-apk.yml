@@ -58,76 +58,17 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: npm run build
 
-      # ─── Готовим папку для Capacitor ────────────────────────
-      # Next.js static export кладёт файлы в .next/server/app/
-      # Нужно собрать их в одну папку с index.html в корне
+      # ─── Готовим папку dist для Capacitor ───────────────────
       - name: Prepare web assets for Capacitor
         working-directory: ${{ env.WORKING_DIR }}
         run: |
-          echo "=== .next structure ==="
-          find .next -name "index.html" 2>/dev/null | head -10
-          echo ""
-          ls -la .next/ 2>/dev/null | head -20
-          echo ""
-
-          # Создаём папку dist для Capacitor
           mkdir -p dist
-
-          # Копируем index.html если есть в корне .next
-          if [ -f ".next/index.html" ]; then
-            cp .next/index.html dist/
-            echo "✅ Copied .next/index.html to dist/"
-          fi
-
-          # Ищем index.html в .next/server/app/
-          if [ -f ".next/server/app/index.html" ]; then
-            cp .next/server/app/index.html dist/
-            echo "✅ Copied .next/server/app/index.html to dist/"
-          fi
-
-          # Копируем все HTML файлы
-          find .next -name "*.html" -exec cp --parents {} dist/ \; 2>/dev/null || true
-
-          # Копируем static assets
-          if [ -d ".next/static" ]; then
-            cp -r .next/static dist/
-            echo "✅ Copied .next/static to dist/"
-          fi
-
-          # Копируем из _next (Next.js static export)
-          if [ -d ".next/server/app/_next" ]; then
-            cp -r .next/server/app/_next dist/
-            echo "✅ Copied _next to dist/"
-          fi
-
-          # Если всё пусто, создаём минимальный index.html
-          if [ ! -f "dist/index.html" ]; then
-            echo "⚠️ No index.html found, creating fallback..."
-            # Ищем любой HTML и копируем как index.html
-            FIRST_HTML=$(find .next -name "*.html" -print -quit 2>/dev/null)
-            if [ -n "$FIRST_HTML" ]; then
-              cp "$FIRST_HTML" dist/index.html
-              echo "✅ Created dist/index.html from $FIRST_HTML"
-            else
-              # Создаём минимальный redirect
-              cat > dist/index.html << 'HTMLEOF'
-              <!DOCTYPE html>
-              <html>
-              <head><meta http-equiv="refresh" content="0;url=./server/app/index.html"></head>
-              <body>Redirecting...</body>
-              </html>
-              HTMLEOF
-              echo "✅ Created minimal dist/index.html"
-            fi
-          fi
-
-          echo ""
-          echo "=== Final dist/ structure ==="
+          cp .next/server/app/index.html dist/index.html
+          cp -r .next/static dist/static
+          echo "=== dist/ contents ==="
           ls -la dist/
-          echo ""
-          find dist -name "index.html" | head -5
 
-      - name: Initialize Capacitor (using dist/)
+      - name: Initialize Capacitor
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           rm -rf capacitor.config.json android
@@ -143,21 +84,21 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           mkdir -p android/app/src/main/res/xml
-          cat > android/app/src/main/res/xml/network_security_config.xml << 'NETEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <network-security-config>
-              <base-config cleartextTrafficPermitted="true">
-                  <trust-anchors>
-                      <certificates src="system" />
-                  </trust-anchors>
-              </base-config>
-              <domain-config cleartextTrafficPermitted="true">
-                  <domain includeSubdomains="true">relay.walletconnect.com</domain>
-                  <domain includeSubdomains="true">polygon-rpc.com</domain>
-                  <domain includeSubdomains="true">chat.aliterra.space</domain>
-              </domain-config>
-          </network-security-config>
-          NETEOF
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'XMLEOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">relay.walletconnect.com</domain>
+        <domain includeSubdomains="true">polygon-rpc.com</domain>
+        <domain includeSubdomains="true">chat.aliterra.space</domain>
+    </domain-config>
+</network-security-config>
+XMLEOF
 
       - name: Patch AndroidManifest for deep links
         working-directory: ${{ env.WORKING_DIR }}
@@ -175,7 +116,7 @@ jobs:
       - name: Fix Kotlin/Gradle compatibility
         working-directory: ${{ env.WORKING_DIR }}
         run: |
-          cat >> android/app/build.gradle << 'EOF'
+          cat >> android/app/build.gradle << 'GRADLEOF'
 
           configurations.all {
               resolutionStrategy {
@@ -183,7 +124,7 @@ jobs:
                   force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22'
               }
           }
-          EOF
+GRADLEOF
 
       - name: Build debug APK
         working-directory: ${{ env.WORKING_DIR }}
