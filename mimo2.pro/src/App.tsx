@@ -41,7 +41,7 @@ const formatTime = (timestamp: number) => {
 
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, wcUri, setWcUri, error: walletError } = useWallet();
+  const { connect, disconnect, wcUri, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(store.activeChat);
   const [messageInput, setMessageInput] = useState('');
@@ -747,32 +747,17 @@ export default function App() {
 
                     {/* MetaMask */}
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         console.log('=== METAMASK CLICKED ===');
-                        // Сразу открываем deep link
-                        const ethereum = (window as any).ethereum;
-                        
-                        if (ethereum) {
-                          // Есть window.ethereum - прямое подключение
-                          console.log('Has window.ethereum, direct connect');
-                          connect('metamask').then(() => {
-                            setShowWalletModal(false);
-                          }).catch((err) => {
-                            alert('Ошибка: ' + err.message);
-                          });
-                        } else {
-                          // Нет window.ethereum - открываем MetaMask через deep link
-                          console.log('No window.ethereum, opening MetaMask...');
-                          const url = 'metamask://dapp/' + window.location.host;
-                          console.log('Deep link URL:', url);
-                          
-                          if (typeof (window as any).Capacitor !== 'undefined') {
-                            window.open(url, '_system');
-                          } else {
-                            window.open(url, '_blank');
-                          }
-                          
-                          alert('MetaMask открыт! Подтвердите подключение и вернитесь в приложение.');
+                        setWalletScreen('connecting');
+                        try {
+                          await connect('metamask');
+                          setWalletScreen('success');
+                          setTimeout(() => setShowWalletModal(false), 1500);
+                        } catch (err: any) {
+                          console.error('MetaMask error:', err);
+                          setWalletScreen('picker');
+                          alert('Ошибка: ' + err.message);
                         }
                       }}
                       style={{ 
@@ -790,21 +775,23 @@ export default function App() {
                       <MetaMaskIcon className="w-10 h-10 rounded-xl" />
                       <div style={{ textAlign: 'left', flex: 1 }}>
                         <p style={{ color: '#f0f6fc', fontWeight: 500, margin: 0 }}>MetaMask</p>
-                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Нажми для подключения</p>
+                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Откроет приложение MetaMask</p>
                       </div>
                     </button>
 
-                    {/* Trust Wallet - ПРЯМОЙ ВЫЗОВ */}
+                    {/* Trust Wallet */}
                     <button 
                       onClick={async () => {
-                        console.log('=== TRUST WALLET BUTTON CLICKED ===');
+                        console.log('=== TRUST WALLET CLICKED ===');
+                        setWalletScreen('connecting');
                         try {
                           await connect('trustwallet');
-                          console.log('=== CONNECT SUCCESS ===');
-                          setShowWalletModal(false);
-                        } catch (err) {
-                          console.error('=== CONNECT ERROR ===', err);
-                          alert('Ошибка: ' + (err as any).message);
+                          setWalletScreen('success');
+                          setTimeout(() => setShowWalletModal(false), 1500);
+                        } catch (err: any) {
+                          console.error('Trust Wallet error:', err);
+                          setWalletScreen('picker');
+                          alert('Ошибка: ' + err.message);
                         }
                       }}
                       style={{ 
@@ -822,7 +809,7 @@ export default function App() {
                       <TrustWalletIcon className="w-10 h-10 rounded-xl" />
                       <div style={{ textAlign: 'left', flex: 1 }}>
                         <p style={{ color: '#f0f6fc', fontWeight: 500, margin: 0 }}>Trust Wallet</p>
-                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Нажми для подключения</p>
+                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Откроет приложение Trust Wallet</p>
                       </div>
                     </button>
 
