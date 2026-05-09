@@ -58,11 +58,80 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: npm run build
 
-      - name: Initialize Capacitor
+      # ─── Готовим папку для Capacitor ────────────────────────
+      # Next.js static export кладёт файлы в .next/server/app/
+      # Нужно собрать их в одну папку с index.html в корне
+      - name: Prepare web assets for Capacitor
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "=== .next structure ==="
+          find .next -name "index.html" 2>/dev/null | head -10
+          echo ""
+          ls -la .next/ 2>/dev/null | head -20
+          echo ""
+
+          # Создаём папку dist для Capacitor
+          mkdir -p dist
+
+          # Копируем index.html если есть в корне .next
+          if [ -f ".next/index.html" ]; then
+            cp .next/index.html dist/
+            echo "✅ Copied .next/index.html to dist/"
+          fi
+
+          # Ищем index.html в .next/server/app/
+          if [ -f ".next/server/app/index.html" ]; then
+            cp .next/server/app/index.html dist/
+            echo "✅ Copied .next/server/app/index.html to dist/"
+          fi
+
+          # Копируем все HTML файлы
+          find .next -name "*.html" -exec cp --parents {} dist/ \; 2>/dev/null || true
+
+          # Копируем static assets
+          if [ -d ".next/static" ]; then
+            cp -r .next/static dist/
+            echo "✅ Copied .next/static to dist/"
+          fi
+
+          # Копируем из _next (Next.js static export)
+          if [ -d ".next/server/app/_next" ]; then
+            cp -r .next/server/app/_next dist/
+            echo "✅ Copied _next to dist/"
+          fi
+
+          # Если всё пусто, создаём минимальный index.html
+          if [ ! -f "dist/index.html" ]; then
+            echo "⚠️ No index.html found, creating fallback..."
+            # Ищем любой HTML и копируем как index.html
+            FIRST_HTML=$(find .next -name "*.html" -print -quit 2>/dev/null)
+            if [ -n "$FIRST_HTML" ]; then
+              cp "$FIRST_HTML" dist/index.html
+              echo "✅ Created dist/index.html from $FIRST_HTML"
+            else
+              # Создаём минимальный redirect
+              cat > dist/index.html << 'HTMLEOF'
+              <!DOCTYPE html>
+              <html>
+              <head><meta http-equiv="refresh" content="0;url=./server/app/index.html"></head>
+              <body>Redirecting...</body>
+              </html>
+              HTMLEOF
+              echo "✅ Created minimal dist/index.html"
+            fi
+          fi
+
+          echo ""
+          echo "=== Final dist/ structure ==="
+          ls -la dist/
+          echo ""
+          find dist -name "index.html" | head -5
+
+      - name: Initialize Capacitor (using dist/)
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           rm -rf capacitor.config.json android
-          npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=.next
+          npx cap init "${{ env.APP_NAME }}" "${{ env.APP_ID }}" --web-dir=dist
 
       - name: Add Android platform
         working-directory: ${{ env.WORKING_DIR }}
@@ -90,25 +159,18 @@ jobs:
           </network-security-config>
           NETEOF
 
-      # ─── Patch AndroidManifest ─────────────────────────────
-      # <queries> должен быть ПРЯМЫМ потомком <manifest>, НЕ внутри <application>
       - name: Patch AndroidManifest for deep links
         working-directory: ${{ env.WORKING_DIR }}
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
 
-          # Добавляем networkSecurityConfig в <application>
           if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
             sed -i 's|<application|<application\n        android:networkSecurityConfig="@xml/network_security_config"|' "$MANIFEST"
           fi
 
-          # Добавляем <queries> ПОСЛЕ </application>, перед </manifest>
           if ! grep -q "queries" "$MANIFEST"; then
             sed -i 's|</application>|    </application>\n    <queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="metamask" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="trust" />\n        </intent>\n        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="wc" />\n        </intent>\n    </queries>|' "$MANIFEST"
           fi
-
-          echo "=== Final AndroidManifest.xml ==="
-          cat "$MANIFEST"
 
       - name: Fix Kotlin/Gradle compatibility
         working-directory: ${{ env.WORKING_DIR }}
