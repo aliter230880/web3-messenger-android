@@ -41,7 +41,7 @@ const formatTime = (timestamp: number) => {
 
 export default function App() {
   const store = useStore();
-  const { connect, disconnect, error: walletError } = useWallet();
+  const { connect, disconnect, wcUri, setWcUri, error: walletError } = useWallet();
   
   const [selectedChatId, setSelectedChatId] = useState<string | null>(store.activeChat);
   const [messageInput, setMessageInput] = useState('');
@@ -830,6 +830,68 @@ export default function App() {
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
                     <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
                       className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
+                  </div>
+                )}
+
+                {walletScreen === 'connecting' && wcUri && (
+                  <div className="py-4 text-center">
+                    <p className="text-[#8b949e] text-sm mb-4">Откройте кошелёк для подтверждения:</p>
+                    <div className="space-y-3">
+                      <a 
+                        href={`metamask://wc?uri=${encodeURIComponent(wcUri)}`}
+                        onClick={(e) => {
+                          console.log('Opening MetaMask...');
+                          if (typeof (window as any).Capacitor !== 'undefined') {
+                            e.preventDefault();
+                            window.open(`metamask://wc?uri=${encodeURIComponent(wcUri)}`, '_system');
+                          }
+                        }}
+                        style={{ 
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '12px',
+                          padding: '16px',
+                          backgroundColor: '#21262d',
+                          borderRadius: '12px',
+                          textDecoration: 'none'
+                        }}
+                      >
+                        <MetaMaskIcon className="w-8 h-8 rounded-lg" />
+                        <span style={{ color: '#f0f6fc', fontWeight: 500 }}>Открыть в MetaMask</span>
+                        <ExternalLink size={16} className="text-[#8b949e]" />
+                      </a>
+                      <a 
+                        href={`trust://wc?uri=${encodeURIComponent(wcUri)}`}
+                        onClick={(e) => {
+                          console.log('Opening Trust Wallet...');
+                          if (typeof (window as any).Capacitor !== 'undefined') {
+                            e.preventDefault();
+                            window.open(`trust://wc?uri=${encodeURIComponent(wcUri)}`, '_system');
+                          }
+                        }}
+                        style={{ 
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '12px',
+                          padding: '16px',
+                          backgroundColor: '#21262d',
+                          borderRadius: '12px',
+                          textDecoration: 'none'
+                        }}
+                      >
+                        <TrustWalletIcon className="w-8 h-8 rounded-lg" />
+                        <span style={{ color: '#f0f6fc', fontWeight: 500 }}>Открыть в Trust Wallet</span>
+                        <ExternalLink size={16} className="text-[#8b949e]" />
+                      </a>
+                    </div>
+                    <button 
+                      onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); setWcUri(null); }}
+                      style={{ marginTop: '16px', color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      Отмена
+                    </button>
                   </div>
                 )}
 
