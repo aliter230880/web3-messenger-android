@@ -724,43 +724,74 @@ export default function App() {
 
                 {walletScreen === 'picker' && (
                   <div className="space-y-3">
-                    <div className="p-3 bg-[#21262d] rounded-xl text-xs text-[#8b949e]">
-                      <p className="flex items-center gap-2"><AlertCircle size={14} className="text-[#f59e0b]" /></p>
-                      <p className="mt-1"><b>MetaMask:</b> Откройте сайт через MetaMask Browser</p>
-                      <p><b>Trust Wallet:</b> Работает сразу</p>
-                    </div>
-                    
+                    {/* ТЕСТОВАЯ КНОПКА - если работает, значит проблема в handleConnectWallet */}
                     <button 
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        console.log('MetaMask button clicked!');
+                      onClick={() => {
+                        console.log('TEST BUTTON CLICKED');
+                        alert('Кнопка работает!');
+                      }}
+                      style={{ 
+                        width: '100%', 
+                        padding: '16px', 
+                        backgroundColor: '#ff0000',
+                        color: 'white',
+                        borderRadius: '12px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      ТЕСТ - НАЖМИ МЕНЯ
+                    </button>
+
+                    {/* MetaMask */}
+                    <button 
+                      onClick={() => {
+                        console.log('=== METAMASK CLICKED ===');
                         handleConnectWallet('metamask');
                       }}
-                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors cursor-pointer"
+                      style={{ 
+                        width: '100%', 
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px',
+                        padding: '16px', 
+                        backgroundColor: '#21262d',
+                        borderRadius: '12px',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
                     >
                       <MetaMaskIcon className="w-10 h-10 rounded-xl" />
-                      <div className="text-left flex-1">
-                        <p className="font-medium text-[#f0f6fc]">MetaMask</p>
-                        <p className="text-xs text-[#8b949e]">Через MetaMask Browser</p>
+                      <div style={{ textAlign: 'left', flex: 1 }}>
+                        <p style={{ color: '#f0f6fc', fontWeight: 500, margin: 0 }}>MetaMask</p>
+                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Нажми для подключения</p>
                       </div>
                     </button>
 
+                    {/* Trust Wallet */}
                     <button 
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        console.log('Trust Wallet button clicked!');
+                      onClick={() => {
+                        console.log('=== TRUST WALLET CLICKED ===');
                         handleConnectWallet('trustwallet');
                       }}
-                      className="w-full flex items-center gap-4 p-4 bg-[#21262d] hover:bg-[#282c34] rounded-xl transition-colors cursor-pointer"
+                      style={{ 
+                        width: '100%', 
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px',
+                        padding: '16px', 
+                        backgroundColor: '#21262d',
+                        borderRadius: '12px',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
                     >
                       <TrustWalletIcon className="w-10 h-10 rounded-xl" />
-                      <div className="text-left flex-1">
-                        <p className="font-medium text-[#f0f6fc]">Trust Wallet</p>
-                        <p className="text-xs text-[#8b949e]">Работает сразу ✓</p>
+                      <div style={{ textAlign: 'left', flex: 1 }}>
+                        <p style={{ color: '#f0f6fc', fontWeight: 500, margin: 0 }}>Trust Wallet</p>
+                        <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>Нажми для подключения</p>
                       </div>
                     </button>
 
