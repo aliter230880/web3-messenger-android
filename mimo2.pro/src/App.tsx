@@ -745,17 +745,34 @@ export default function App() {
                       ТЕСТ - НАЖМИ МЕНЯ
                     </button>
 
-                    {/* MetaMask - ПРЯМОЙ ВЫЗОВ */}
+                    {/* MetaMask */}
                     <button 
-                      onClick={async () => {
-                        console.log('=== METAMASK BUTTON CLICKED ===');
-                        try {
-                          await connect('metamask');
-                          console.log('=== CONNECT SUCCESS ===');
-                          setShowWalletModal(false);
-                        } catch (err) {
-                          console.error('=== CONNECT ERROR ===', err);
-                          alert('Ошибка: ' + (err as any).message);
+                      onClick={() => {
+                        console.log('=== METAMASK CLICKED ===');
+                        // Сразу открываем deep link
+                        const ethereum = (window as any).ethereum;
+                        
+                        if (ethereum) {
+                          // Есть window.ethereum - прямое подключение
+                          console.log('Has window.ethereum, direct connect');
+                          connect('metamask').then(() => {
+                            setShowWalletModal(false);
+                          }).catch((err) => {
+                            alert('Ошибка: ' + err.message);
+                          });
+                        } else {
+                          // Нет window.ethereum - открываем MetaMask через deep link
+                          console.log('No window.ethereum, opening MetaMask...');
+                          const url = 'metamask://dapp/' + window.location.host;
+                          console.log('Deep link URL:', url);
+                          
+                          if (typeof (window as any).Capacitor !== 'undefined') {
+                            window.open(url, '_system');
+                          } else {
+                            window.open(url, '_blank');
+                          }
+                          
+                          alert('MetaMask открыт! Подтвердите подключение и вернитесь в приложение.');
                         }
                       }}
                       style={{ 
@@ -830,109 +847,6 @@ export default function App() {
                     <p className="text-sm text-[#8b949e] mb-4">Подтвердите в кошельке</p>
                     <button onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); }}
                       className="text-[#8b949e] text-sm hover:text-[#f0f6fc] underline">Отмена</button>
-                  </div>
-                )}
-
-                {walletScreen === 'connecting' && wcUri && (
-                  <div className="py-4 text-center">
-                    <p className="text-[#8b949e] text-sm mb-4">Откройте кошелёк для подтверждения:</p>
-                    <div className="space-y-3">
-                      <button 
-                        onClick={() => {
-                          console.log('Opening MetaMask...');
-                          const encodedUri = encodeURIComponent(wcUri || '');
-                          
-                          // Пробуем разные форматы deep link
-                          const urls = [
-                            `metamask://wc?uri=${encodedUri}`,
-                            `metamask://dapp/${window.location.host}`,
-                            `https://metamask.app.link/dapp/${window.location.host}`,
-                          ];
-                          
-                          // Открываем первый вариант
-                          const url = urls[0];
-                          console.log('MetaMask URL:', url);
-                          
-                          if (typeof (window as any).Capacitor !== 'undefined') {
-                            window.open(url, '_system');
-                          } else {
-                            window.open(url, '_blank');
-                          }
-                        }}
-                        style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '12px',
-                          padding: '16px',
-                          backgroundColor: '#21262d',
-                          borderRadius: '12px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          width: '100%'
-                        }}
-                      >
-                        <MetaMaskIcon className="w-8 h-8 rounded-lg" />
-                        <span style={{ color: '#f0f6fc', fontWeight: 500 }}>Открыть в MetaMask</span>
-                        <ExternalLink size={16} className="text-[#8b949e]" />
-                      </button>
-                      
-                      {/* Резервная кнопка - просто открыть MetaMask */}
-                      <button 
-                        onClick={() => {
-                          console.log('Opening MetaMask app...');
-                          if (typeof (window as any).Capacitor !== 'undefined') {
-                            window.open('metamask://', '_system');
-                          } else {
-                            window.open('https://metamask.io', '_blank');
-                          }
-                        }}
-                        style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '12px',
-                          padding: '12px',
-                          backgroundColor: '#161b22',
-                          borderRadius: '12px',
-                          border: '1px solid #30363d',
-                          cursor: 'pointer',
-                          width: '100%'
-                        }}
-                      >
-                        <span style={{ color: '#8b949e', fontSize: '14px' }}>Просто открыть MetaMask</span>
-                      </button>
-                      <a 
-                        href={`trust://wc?uri=${encodeURIComponent(wcUri)}`}
-                        onClick={(e) => {
-                          console.log('Opening Trust Wallet...');
-                          if (typeof (window as any).Capacitor !== 'undefined') {
-                            e.preventDefault();
-                            window.open(`trust://wc?uri=${encodeURIComponent(wcUri)}`, '_system');
-                          }
-                        }}
-                        style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '12px',
-                          padding: '16px',
-                          backgroundColor: '#21262d',
-                          borderRadius: '12px',
-                          textDecoration: 'none'
-                        }}
-                      >
-                        <TrustWalletIcon className="w-8 h-8 rounded-lg" />
-                        <span style={{ color: '#f0f6fc', fontWeight: 500 }}>Открыть в Trust Wallet</span>
-                        <ExternalLink size={16} className="text-[#8b949e]" />
-                      </a>
-                    </div>
-                    <button 
-                      onClick={() => { setShowWalletModal(false); setWalletScreen('picker'); setWcUri(null); }}
-                      style={{ marginTop: '16px', color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}
-                    >
-                      Отмена
-                    </button>
                   </div>
                 )}
 
