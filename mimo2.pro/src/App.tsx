@@ -745,11 +745,18 @@ export default function App() {
                       ТЕСТ - НАЖМИ МЕНЯ
                     </button>
 
-                    {/* MetaMask */}
+                    {/* MetaMask - ПРЯМОЙ ВЫЗОВ */}
                     <button 
-                      onClick={() => {
-                        console.log('=== METAMASK CLICKED ===');
-                        handleConnectWallet('metamask');
+                      onClick={async () => {
+                        console.log('=== METAMASK BUTTON CLICKED ===');
+                        try {
+                          await connect('metamask');
+                          console.log('=== CONNECT SUCCESS ===');
+                          setShowWalletModal(false);
+                        } catch (err) {
+                          console.error('=== CONNECT ERROR ===', err);
+                          alert('Ошибка: ' + (err as any).message);
+                        }
                       }}
                       style={{ 
                         width: '100%', 
@@ -770,11 +777,18 @@ export default function App() {
                       </div>
                     </button>
 
-                    {/* Trust Wallet */}
+                    {/* Trust Wallet - ПРЯМОЙ ВЫЗОВ */}
                     <button 
-                      onClick={() => {
-                        console.log('=== TRUST WALLET CLICKED ===');
-                        handleConnectWallet('trustwallet');
+                      onClick={async () => {
+                        console.log('=== TRUST WALLET BUTTON CLICKED ===');
+                        try {
+                          await connect('trustwallet');
+                          console.log('=== CONNECT SUCCESS ===');
+                          setShowWalletModal(false);
+                        } catch (err) {
+                          console.error('=== CONNECT ERROR ===', err);
+                          alert('Ошибка: ' + (err as any).message);
+                        }
                       }}
                       style={{ 
                         width: '100%', 
